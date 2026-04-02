@@ -21,15 +21,25 @@ export default function Dashboard() {
   });
 
   const analyzeMutation = useMutation({
-    mutationFn: async (file) => {
+    mutationFn: async ({ file, url }) => {
       setIsProcessing(true);
 
-      // Upload the file
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      let file_url, fileName;
+
+      if (url) {
+        // Use URL directly
+        file_url = url;
+        fileName = url.split("/").pop().split("?")[0] || url;
+      } else {
+        // Upload the file
+        const uploaded = await base44.integrations.Core.UploadFile({ file });
+        file_url = uploaded.file_url;
+        fileName = file.name;
+      }
 
       // Create the record in processing state
       const record = await base44.entities.FilingAnalysis.create({
-        file_name: file.name,
+        file_name: fileName,
         file_url: file_url,
         status: "processing",
       });
@@ -39,7 +49,7 @@ export default function Dashboard() {
         prompt: `You are an expert SEC filing analyst. Analyze this SEC filing document thoroughly and extract ALL relevant financial data.
 
 The file is located at: ${file_url}
-File name: ${file.name}
+File name: ${fileName}
 
 Provide a comprehensive analysis including:
 1. Filing metadata (company name, ticker, filing type like 10-K/10-Q/8-K/S-1, filing date, period covered)
@@ -220,7 +230,8 @@ Be thorough - extract every number, percentage, and financial metric you can fin
             </p>
           </div>
           <FileUploader
-            onFileSelected={(file) => analyzeMutation.mutate(file)}
+            onFileSelected={(file) => analyzeMutation.mutate({ file })}
+            onUrlSubmitted={(url) => analyzeMutation.mutate({ url })}
             isProcessing={isProcessing}
           />
         </motion.section>
