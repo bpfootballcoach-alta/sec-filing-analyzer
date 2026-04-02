@@ -20,158 +20,62 @@ export default function Dashboard() {
     initialData: [],
   });
 
+  const JSON_SCHEMA = {
+    type: "object",
+    properties: {
+      company_name: { type: "string" },
+      ticker: { type: "string" },
+      filing_type: { type: "string" },
+      filing_date: { type: "string" },
+      period_covered: { type: "string" },
+      executive_summary: { type: "string" },
+      financial_highlights: { type: "array", items: { type: "object", properties: { label: { type: "string" }, value: { type: "string" }, change: { type: "string" }, category: { type: "string" } } } },
+      revenue_data: { type: "object", properties: { total_revenue: { type: "string" }, revenue_growth: { type: "string" }, segments: { type: "array", items: { type: "object", properties: { name: { type: "string" }, amount: { type: "string" }, percentage: { type: "string" } } } } } },
+      profitability: { type: "object", properties: { gross_margin: { type: "string" }, operating_margin: { type: "string" }, net_margin: { type: "string" }, ebitda: { type: "string" }, eps: { type: "string" } } },
+      balance_sheet: { type: "object", properties: { total_assets: { type: "string" }, total_liabilities: { type: "string" }, total_equity: { type: "string" }, cash_and_equivalents: { type: "string" }, total_debt: { type: "string" }, debt_to_equity: { type: "string" } } },
+      cash_flow: { type: "object", properties: { operating: { type: "string" }, investing: { type: "string" }, financing: { type: "string" }, free_cash_flow: { type: "string" } } },
+      financing_data: { type: "object", properties: { summary: { type: "string" }, details: { type: "array", items: { type: "object", properties: { type: { type: "string" }, description: { type: "string" }, amount: { type: "string" } } } } } },
+      risk_factors: { type: "array", items: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, severity: { type: "string" } } } },
+      key_insights: { type: "array", items: { type: "string" } },
+    },
+  };
+
   const analyzeMutation = useMutation({
     mutationFn: async ({ file, url }) => {
       setIsProcessing(true);
 
+      const isUrl = !!url;
       let file_url, fileName;
 
-      if (url) {
-        // Use URL directly
+      if (isUrl) {
         file_url = url;
         fileName = url.split("/").pop().split("?")[0] || url;
       } else {
-        // Upload the file
         const uploaded = await base44.integrations.Core.UploadFile({ file });
         file_url = uploaded.file_url;
         fileName = file.name;
       }
 
-      // Create the record in processing state
       const record = await base44.entities.FilingAnalysis.create({
         file_name: fileName,
         file_url: file_url,
         status: "processing",
       });
 
-      // Extract and analyze data using LLM
+      const prompt = `You are an expert SEC filing analyst. Analyze this SEC filing thoroughly and extract ALL relevant financial data.
+
+${isUrl ? `The filing URL is: ${file_url}\nFetch and read the full content at that URL.` : `File name: ${fileName}`}
+
+Extract: company name, ticker, filing type (10-K/10-Q/8-K/S-1/etc), filing date, period covered, executive summary, ALL financial metrics with YoY changes, revenue breakdown by segment, profitability metrics (margins, EBITDA, EPS), balance sheet highlights, cash flow summary, financing and capital structure details, key risk factors with severity, and notable insights. Be thorough.`;
+
       const analysisResult = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are an expert SEC filing analyst. Analyze this SEC filing document thoroughly and extract ALL relevant financial data.
-
-The file is located at: ${file_url}
-File name: ${fileName}
-
-Provide a comprehensive analysis including:
-1. Filing metadata (company name, ticker, filing type like 10-K/10-Q/8-K/S-1, filing date, period covered)
-2. Executive summary of the filing
-3. ALL financial highlights/metrics with current values and YoY changes where available
-4. Revenue data with segment breakdown if available
-5. Profitability metrics (gross margin, operating margin, net margin, EBITDA, EPS)
-6. Balance sheet highlights (total assets, liabilities, equity, cash, debt, debt-to-equity)
-7. Cash flow summary (operating, investing, financing, free cash flow)
-8. Financing and capital structure details (debt instruments, credit facilities, equity offerings, etc.)
-9. Key risk factors with severity assessment
-10. Notable insights and observations
-
-Be thorough - extract every number, percentage, and financial metric you can find.`,
-        file_urls: [file_url],
-        model: "claude_sonnet_4_6",
-        response_json_schema: {
-          type: "object",
-          properties: {
-            company_name: { type: "string" },
-            ticker: { type: "string" },
-            filing_type: { type: "string" },
-            filing_date: { type: "string" },
-            period_covered: { type: "string" },
-            executive_summary: { type: "string" },
-            financial_highlights: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  label: { type: "string" },
-                  value: { type: "string" },
-                  change: { type: "string" },
-                  category: { type: "string" },
-                },
-              },
-            },
-            revenue_data: {
-              type: "object",
-              properties: {
-                total_revenue: { type: "string" },
-                revenue_growth: { type: "string" },
-                segments: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      name: { type: "string" },
-                      amount: { type: "string" },
-                      percentage: { type: "string" },
-                    },
-                  },
-                },
-              },
-            },
-            profitability: {
-              type: "object",
-              properties: {
-                gross_margin: { type: "string" },
-                operating_margin: { type: "string" },
-                net_margin: { type: "string" },
-                ebitda: { type: "string" },
-                eps: { type: "string" },
-              },
-            },
-            balance_sheet: {
-              type: "object",
-              properties: {
-                total_assets: { type: "string" },
-                total_liabilities: { type: "string" },
-                total_equity: { type: "string" },
-                cash_and_equivalents: { type: "string" },
-                total_debt: { type: "string" },
-                debt_to_equity: { type: "string" },
-              },
-            },
-            cash_flow: {
-              type: "object",
-              properties: {
-                operating: { type: "string" },
-                investing: { type: "string" },
-                financing: { type: "string" },
-                free_cash_flow: { type: "string" },
-              },
-            },
-            financing_data: {
-              type: "object",
-              properties: {
-                summary: { type: "string" },
-                details: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      type: { type: "string" },
-                      description: { type: "string" },
-                      amount: { type: "string" },
-                    },
-                  },
-                },
-              },
-            },
-            risk_factors: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  description: { type: "string" },
-                  severity: { type: "string" },
-                },
-              },
-            },
-            key_insights: {
-              type: "array",
-              items: { type: "string" },
-            },
-          },
-        },
+        prompt,
+        response_json_schema: JSON_SCHEMA,
+        ...(isUrl
+          ? { add_context_from_internet: true, model: "gemini_3_pro" }
+          : { file_urls: [file_url], model: "claude_sonnet_4_6" }),
       });
 
-      // Update the record with analysis results
       await base44.entities.FilingAnalysis.update(record.id, {
         ...analysisResult,
         status: "completed",
