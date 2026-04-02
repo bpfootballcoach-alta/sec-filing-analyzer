@@ -14,6 +14,11 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.FilingAnalysis.delete(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] }),
+  });
+
   const { data: analyses, isLoading } = useQuery({
     queryKey: ["filingAnalyses"],
     queryFn: () => base44.entities.FilingAnalysis.list("-created_date", 50),
@@ -186,7 +191,7 @@ Extract: company name, ticker, filing type (10-K/10-Q/8-K/S-1/etc), filing date,
           ) : (
             <div className="grid gap-3">
               {filteredAnalyses.map((analysis, i) => (
-                <AnalysisCard key={analysis.id} analysis={analysis} index={i} />
+                <AnalysisCard key={analysis.id} analysis={analysis} index={i} onDelete={(id) => deleteMutation.mutate(id)} />
               ))}
             </div>
           )}

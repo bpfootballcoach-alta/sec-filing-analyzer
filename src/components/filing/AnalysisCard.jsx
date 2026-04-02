@@ -1,11 +1,11 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { FileText, Building2, Calendar, ArrowRight, Loader2, AlertCircle } from "lucide-react";
+import { FileText, Building2, Calendar, ArrowRight, Loader2, AlertCircle, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
 
-export default function AnalysisCard({ analysis, index }) {
+export default function AnalysisCard({ analysis, index, onDelete }) {
   const statusConfig = {
     processing: { color: "bg-accent/10 text-accent", icon: Loader2, label: "Processing" },
     completed: { color: "bg-emerald-50 text-emerald-700", icon: FileText, label: "Completed" },
@@ -59,7 +59,15 @@ export default function AnalysisCard({ analysis, index }) {
               </div>
             </div>
           </div>
-          <ArrowRight className="w-5 h-5 text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all flex-shrink-0 mt-2" />
+          <div className="flex items-center gap-2 flex-shrink-0 mt-1">
+            <button
+              onClick={(e) => { e.preventDefault(); onDelete?.(analysis.id); }}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <ArrowRight className="w-5 h-5 text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+          </div>
         </div>
       </Link>
     </motion.div>

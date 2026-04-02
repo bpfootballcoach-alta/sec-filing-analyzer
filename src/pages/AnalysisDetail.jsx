@@ -1,7 +1,7 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Building2,
@@ -16,6 +16,7 @@ import {
   Wallet,
   Loader2,
   ExternalLink,
+  Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,9 +33,9 @@ import RiskFactorsList from "@/components/filing/RiskFactorsList";
 import FinancingDetails from "@/components/filing/FinancingDetails";
 
 export default function AnalysisDetail() {
-  const urlParams = new URLSearchParams(window.location.search);
   const pathParts = window.location.pathname.split("/");
   const analysisId = pathParts[pathParts.length - 1];
+  const navigate = useNavigate();
 
   const { data: analysis, isLoading } = useQuery({
     queryKey: ["filingAnalysis", analysisId],
@@ -46,6 +47,11 @@ export default function AnalysisDetail() {
     refetchInterval: (query) => {
       return query.state.data?.status === "processing" ? 3000 : false;
     },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => base44.entities.FilingAnalysis.delete(analysisId),
+    onSuccess: () => navigate("/"),
   });
 
   if (isLoading) {
@@ -83,6 +89,16 @@ export default function AnalysisDetail() {
             <h2 className="text-xl font-semibold text-foreground">Analyzing Filing</h2>
             <p className="text-muted-foreground mt-2">Extracting financial data and insights...</p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => deleteMutation.mutate()}
+            disabled={deleteMutation.isPending}
+            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+          >
+            {deleteMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+            Cancel & Delete
+          </Button>
         </div>
       </div>
     );
@@ -96,13 +112,24 @@ export default function AnalysisDetail() {
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft className="w-4 h-4" /> Back
           </Link>
-          {analysis.file_url && (
-            <a href={analysis.file_url} target="_blank" rel="noopener noreferrer">
-              <Button variant="outline" size="sm">
-                <ExternalLink className="w-4 h-4 mr-2" /> View Original
-              </Button>
-            </a>
-          )}
+          <div className="flex items-center gap-2">
+            {analysis.file_url && (
+              <a href={analysis.file_url} target="_blank" rel="noopener noreferrer">
+                <Button variant="outline" size="sm">
+                  <ExternalLink className="w-4 h-4 mr-2" /> View Original
+                </Button>
+              </a>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="text-destructive border-destructive/30 hover:bg-destructive/10"
+            >
+              {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            </Button>
+          </div>
         </div>
       </header>
 
