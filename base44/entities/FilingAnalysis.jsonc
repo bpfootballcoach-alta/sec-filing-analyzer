@@ -34,6 +34,33 @@
       "type": "string",
       "description": "High-level executive summary"
     },
+    "narrative_highlights": {
+      "type": "object",
+      "description": "Key qualitative narrative disclosures from the filing",
+      "properties": {
+        "management_commentary": {
+          "type": "string"
+        },
+        "business_developments": {
+          "type": "string"
+        },
+        "legal_regulatory": {
+          "type": "string"
+        },
+        "going_concern_or_restatements": {
+          "type": "string"
+        },
+        "guidance_and_outlook": {
+          "type": "string"
+        },
+        "significant_events": {
+          "type": "string"
+        },
+        "overall_tone": {
+          "type": "string"
+        }
+      }
+    },
     "financial_highlights": {
       "type": "array",
       "description": "Key financial metrics extracted",

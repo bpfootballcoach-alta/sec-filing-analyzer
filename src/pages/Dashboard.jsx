@@ -56,6 +56,17 @@ export default function Dashboard() {
           transactions: { type: "array", items: { type: "object", properties: { type: { type: "string" }, instrument: { type: "string" }, date: { type: "string" }, amount: { type: "string" }, structure: { type: "string" }, cost_basis: { type: "string" }, interest_rate_or_yield: { type: "string" }, maturity_or_term: { type: "string" }, use_of_proceeds: { type: "string" }, underwriters_or_parties: { type: "string" }, key_terms: { type: "string" } } } }
         }
       },
+      narrative_highlights: {
+        type: "object", properties: {
+          management_commentary: { type: "string" },
+          business_developments: { type: "string" },
+          legal_regulatory: { type: "string" },
+          going_concern_or_restatements: { type: "string" },
+          guidance_and_outlook: { type: "string" },
+          significant_events: { type: "string" },
+          overall_tone: { type: "string" },
+        }
+      },
       risk_factors: { type: "array", items: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, severity: { type: "string" } } } },
       key_insights: { type: "array", items: { type: "string" } },
     },
@@ -89,41 +100,49 @@ ${isUrl
   ? `The filing is available at this URL: ${file_url}\nFetch and read the FULL document including all HTML tables, XBRL data, footnotes, and schedules.`
   : `Carefully read every page of the attached filing document including all tables, footnotes, and schedules.`}
 
-CRITICAL INSTRUCTION: You MUST read and parse every financial table in the document. Financial tables contain the most important data. Do not skip or summarize tables — extract exact line items and figures from:
-- Income Statement / Statement of Operations (all line items, current AND prior periods for YoY comparison)
-- Balance Sheet / Statement of Financial Position (all line items, assets, liabilities, equity)
-- Cash Flow Statement (operating, investing, financing sections — all line items)
-- Notes to Financial Statements (debt schedules, maturities, rates, capital structure details)
-- Any segment or geographic breakdown tables
-- Any MD&A tables with key metrics
+CRITICAL INSTRUCTIONS:
+1. Read EVERY section of this filing — not just the numbers. The narrative sections are just as important as the tables.
+2. Parse all financial tables for exact figures (income statement, balance sheet, cash flows, debt schedules, segment tables).
+3. READ AND SUMMARIZE the qualitative narrative sections: MD&A, Business Overview, Risk Factors, Legal Proceedings, CEO/management commentary, forward guidance, and any disclosed strategy or operational changes.
 
-Extract the following comprehensively:
+Extract ALL of the following:
+
 1. Company name, ticker, filing type (10-K/10-Q/8-K/S-1/etc), filing date, period covered
-2. Executive summary — based on actual reported results, not forward-looking language
-3. ALL financial highlights with exact figures and YoY changes (use numbers from the tables)
-4. Revenue breakdown by segment — pull from segment tables in the notes or MD&A
-5. Profitability metrics — exact gross margin, operating margin, net margin, EBITDA, EPS (basic and diluted)
-6. Balance sheet — all major line items with exact values
-7. Cash flow — all three sections with exact line item totals
-8. CAPITAL STRUCTURE (pull from balance sheet + debt schedule notes):
-   - Total capitalization and equity/debt split (% of total cap)
-   - Equity: common equity, preferred equity, shares outstanding, market cap, book value per share
-   - Debt: total debt, short-term vs long-term, weighted average interest rate
-   - EVERY individual debt instrument listed in the notes (bonds, notes, term loans, revolvers, etc.) — include name, type, outstanding principal, maturity date, interest rate/coupon, and cost basis or issue yield if disclosed
-   - Any other capital components (convertibles, warrants, minority interest, etc.)
-9. FINANCING ACTIVITY (pull from cash flow statement financing section + notes + 8-K disclosures if present):
-   - Every financing transaction: type, instrument name, date, amount raised/borrowed/repaid
-   - Full structure of each transaction
-   - Cost basis: price per share, issue price, OID, spread, yield, all-in cost
-   - Interest rate or yield for debt instruments
-   - Maturity or term
-   - Use of proceeds
-   - Underwriters or counterparties
-   - Key terms, covenants, collateral
-10. Key risk factors with severity
-11. Notable analyst-level insights
 
-Return exact numbers from tables. If a number appears in a table, use that exact figure — do not round or paraphrase.`;
+2. EXECUTIVE SUMMARY — Write a rich 3-5 sentence summary of what this filing actually says. What happened this period? What is management saying? Are there any warnings, surprises, or notable events disclosed? What is the overall tone — optimistic, cautious, defensive?
+
+3. WHAT IS IN THIS FILING — Summarize the key narrative disclosures:
+   - What does management say about the business performance? (MD&A)
+   - Are there any major business developments, acquisitions, divestitures, or strategic shifts?
+   - Any disclosed legal issues, investigations, or regulatory actions?
+   - Any going concern warnings, restatements, or auditor qualifications?
+   - Forward-looking guidance or outlook statements from management
+   - Any significant events disclosed (layoffs, restructuring, product launches, market changes)
+
+4. Financial highlights with exact figures and YoY changes from tables
+
+5. Revenue breakdown by segment
+
+6. Profitability metrics — gross margin, operating margin, net margin, EBITDA, EPS (basic and diluted)
+
+7. Balance sheet — major line items with exact values
+
+8. Cash flow — operating, investing, financing totals
+
+9. CAPITAL STRUCTURE (from balance sheet + notes):
+   - Total capitalization, equity/debt split
+   - Equity details: common equity, preferred, shares outstanding, market cap, book value per share
+   - Every individual debt instrument: name, type, principal, maturity, rate, cost basis
+   - Any convertibles, warrants, or other capital components
+
+10. FINANCING ACTIVITY (from cash flow + notes + disclosures):
+    - Every financing transaction with: type, instrument, date, amount, structure, cost basis, rate, maturity, use of proceeds, parties, key terms
+
+11. RISK FACTORS — summarize the most important risks disclosed, not just list headings. What is the company actually warning investors about? Assign severity.
+
+12. KEY INSIGHTS — analyst-level observations about what this filing reveals that may not be obvious from the headline numbers. Flag anything unusual, concerning, or noteworthy in the narrative.
+
+Return exact numbers from tables AND rich qualitative summaries from the narrative sections. Both matter equally.`;
 
       const analysisResult = await base44.integrations.Core.InvokeLLM({
         prompt,

@@ -17,6 +17,7 @@ import {
   Loader2,
   ExternalLink,
   Trash2,
+  MessageSquare,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ import ProfitabilityTable from "@/components/filing/ProfitabilityTable";
 import RevenueBreakdown from "@/components/filing/RevenueBreakdown";
 import RiskFactorsList from "@/components/filing/RiskFactorsList";
 import FinancingDetails from "@/components/filing/FinancingDetails";
+import NarrativeHighlights from "@/components/filing/NarrativeHighlights";
 
 export default function AnalysisDetail() {
   const pathParts = window.location.pathname.split("/");
@@ -183,6 +185,13 @@ export default function AnalysisDetail() {
             <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
               {analysis.executive_summary}
             </p>
+          </SectionCard>
+        )}
+
+        {/* Narrative Highlights */}
+        {analysis.narrative_highlights && (
+          <SectionCard title="What's In This Filing" icon={MessageSquare} delay={0.08}>
+            <NarrativeHighlights narrative={analysis.narrative_highlights} />
           </SectionCard>
         )}
 
