@@ -12,7 +12,7 @@
     },
     "filing_type": {
       "type": "string",
-      "description": "Type of SEC filing (10-K, 10-Q, 8-K, etc.)"
+      "description": "Type of SEC filing (10-K, 10-Q, 8-K, S-1, etc.)"
     },
     "company_name": {
       "type": "string",
@@ -129,9 +129,163 @@
         }
       }
     },
+    "capital_structure": {
+      "type": "object",
+      "description": "Full capital structure breakdown",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "total_capitalization": {
+          "type": "string"
+        },
+        "equity": {
+          "type": "object",
+          "properties": {
+            "common_equity": {
+              "type": "string"
+            },
+            "preferred_equity": {
+              "type": "string"
+            },
+            "shares_outstanding": {
+              "type": "string"
+            },
+            "market_cap": {
+              "type": "string"
+            },
+            "book_value_per_share": {
+              "type": "string"
+            },
+            "equity_percentage_of_cap": {
+              "type": "string"
+            }
+          }
+        },
+        "debt": {
+          "type": "object",
+          "properties": {
+            "total_debt": {
+              "type": "string"
+            },
+            "short_term_debt": {
+              "type": "string"
+            },
+            "long_term_debt": {
+              "type": "string"
+            },
+            "debt_percentage_of_cap": {
+              "type": "string"
+            },
+            "weighted_average_interest_rate": {
+              "type": "string"
+            },
+            "debt_instruments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "string"
+                  },
+                  "maturity": {
+                    "type": "string"
+                  },
+                  "interest_rate": {
+                    "type": "string"
+                  },
+                  "cost_basis": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "other_components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "financing_activity": {
+      "type": "object",
+      "description": "Recent financing transactions and activities",
+      "properties": {
+        "has_recent_financing": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "transactions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "instrument": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "string"
+              },
+              "structure": {
+                "type": "string"
+              },
+              "cost_basis": {
+                "type": "string"
+              },
+              "interest_rate_or_yield": {
+                "type": "string"
+              },
+              "maturity_or_term": {
+                "type": "string"
+              },
+              "use_of_proceeds": {
+                "type": "string"
+              },
+              "underwriters_or_parties": {
+                "type": "string"
+              },
+              "key_terms": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "financing_data": {
       "type": "object",
-      "description": "Financing and capital structure data",
+      "description": "Financing and capital structure data (legacy)",
       "properties": {
         "summary": {
           "type": "string"

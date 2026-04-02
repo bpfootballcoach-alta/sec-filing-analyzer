@@ -219,7 +219,11 @@ export default function AnalysisDetail() {
 
         {/* Financing Details */}
         <SectionCard title="Financing & Capital Structure" icon={Landmark} delay={0.35}>
-          <FinancingDetails financing={analysis.financing_data} />
+          <FinancingDetails
+            financing={analysis.financing_data}
+            capitalStructure={analysis.capital_structure}
+            financingActivity={analysis.financing_activity}
+          />
         </SectionCard>
 
         {/* Key Insights */}

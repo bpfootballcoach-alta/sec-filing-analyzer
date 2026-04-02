@@ -40,6 +40,22 @@ export default function Dashboard() {
       balance_sheet: { type: "object", properties: { total_assets: { type: "string" }, total_liabilities: { type: "string" }, total_equity: { type: "string" }, cash_and_equivalents: { type: "string" }, total_debt: { type: "string" }, debt_to_equity: { type: "string" } } },
       cash_flow: { type: "object", properties: { operating: { type: "string" }, investing: { type: "string" }, financing: { type: "string" }, free_cash_flow: { type: "string" } } },
       financing_data: { type: "object", properties: { summary: { type: "string" }, details: { type: "array", items: { type: "object", properties: { type: { type: "string" }, description: { type: "string" }, amount: { type: "string" } } } } } },
+      capital_structure: {
+        type: "object", properties: {
+          summary: { type: "string" },
+          total_capitalization: { type: "string" },
+          equity: { type: "object", properties: { common_equity: { type: "string" }, preferred_equity: { type: "string" }, shares_outstanding: { type: "string" }, market_cap: { type: "string" }, book_value_per_share: { type: "string" }, equity_percentage_of_cap: { type: "string" } } },
+          debt: { type: "object", properties: { total_debt: { type: "string" }, short_term_debt: { type: "string" }, long_term_debt: { type: "string" }, debt_percentage_of_cap: { type: "string" }, weighted_average_interest_rate: { type: "string" }, debt_instruments: { type: "array", items: { type: "object", properties: { name: { type: "string" }, type: { type: "string" }, amount: { type: "string" }, maturity: { type: "string" }, interest_rate: { type: "string" }, cost_basis: { type: "string" }, notes: { type: "string" } } } } } },
+          other_components: { type: "array", items: { type: "object", properties: { name: { type: "string" }, amount: { type: "string" }, description: { type: "string" } } } }
+        }
+      },
+      financing_activity: {
+        type: "object", properties: {
+          has_recent_financing: { type: "boolean" },
+          summary: { type: "string" },
+          transactions: { type: "array", items: { type: "object", properties: { type: { type: "string" }, instrument: { type: "string" }, date: { type: "string" }, amount: { type: "string" }, structure: { type: "string" }, cost_basis: { type: "string" }, interest_rate_or_yield: { type: "string" }, maturity_or_term: { type: "string" }, use_of_proceeds: { type: "string" }, underwriters_or_parties: { type: "string" }, key_terms: { type: "string" } } } }
+        }
+      },
       risk_factors: { type: "array", items: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, severity: { type: "string" } } } },
       key_insights: { type: "array", items: { type: "string" } },
     },
@@ -71,7 +87,36 @@ export default function Dashboard() {
 
 ${isUrl ? `The filing URL is: ${file_url}\nFetch and read the full content at that URL.` : `File name: ${fileName}`}
 
-Extract: company name, ticker, filing type (10-K/10-Q/8-K/S-1/etc), filing date, period covered, executive summary, ALL financial metrics with YoY changes, revenue breakdown by segment, profitability metrics (margins, EBITDA, EPS), balance sheet highlights, cash flow summary, financing and capital structure details, key risk factors with severity, and notable insights. Be thorough.`;
+Extract the following comprehensively:
+1. Company name, ticker, filing type (10-K/10-Q/8-K/S-1/etc), filing date, period covered
+2. Executive summary
+3. ALL financial metrics with YoY changes
+4. Revenue breakdown by segment
+5. Profitability metrics (gross margin, operating margin, net margin, EBITDA, EPS)
+6. Balance sheet highlights
+7. Cash flow summary (operating, investing, financing, free cash flow)
+8. CAPITAL STRUCTURE: Provide a full breakdown of the company's capital structure including:
+   - Total capitalization and the equity/debt split (as % of total cap)
+   - Equity: common equity, preferred equity, shares outstanding, market cap, book value per share
+   - Debt: total debt, short-term vs long-term, weighted average interest rate
+   - ALL individual debt instruments (bonds, notes, credit facilities, term loans, etc.) with: name, type, outstanding amount, maturity date, interest rate, and cost basis (issue price or yield-to-maturity if available)
+   - Any other capital components (warrants, convertibles, etc.)
+9. FINANCING ACTIVITY: Identify any recent or disclosed financing transactions in this filing period:
+   - Type of financing (equity offering, debt issuance, credit facility, convertible notes, IPO, etc.)
+   - Instrument name/description
+   - Transaction date
+   - Amount raised
+   - Detailed structure of the financing
+   - Cost basis (price per share, issue price, spread, yield, OID, etc.)
+   - Interest rate or yield (if debt)
+   - Maturity or term
+   - Use of proceeds
+   - Underwriters or counterparties
+   - Key terms and covenants
+10. Key risk factors with severity levels
+11. Notable insights and observations
+
+Be extremely thorough on capital structure and financing — extract every debt instrument and financing transaction mentioned.`;
 
       const analysisResult = await base44.integrations.Core.InvokeLLM({
         prompt,
