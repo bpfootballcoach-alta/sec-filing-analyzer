@@ -83,46 +83,53 @@ export default function Dashboard() {
         status: "processing",
       });
 
-      const prompt = `You are an expert SEC filing analyst. Analyze this SEC filing thoroughly and extract ALL relevant financial data.
+      const prompt = `You are an expert SEC filing analyst with deep expertise in reading financial statements, footnotes, and tables. Your job is to extract PRECISE numerical data directly from the filing — do NOT estimate or summarize if exact figures are present.
 
-${isUrl ? `The filing URL is: ${file_url}\nFetch and read the full content at that URL.` : `File name: ${fileName}`}
+${isUrl
+  ? `The filing is available at this URL: ${file_url}\nFetch and read the FULL document including all HTML tables, XBRL data, footnotes, and schedules.`
+  : `Carefully read every page of the attached filing document including all tables, footnotes, and schedules.`}
+
+CRITICAL INSTRUCTION: You MUST read and parse every financial table in the document. Financial tables contain the most important data. Do not skip or summarize tables — extract exact line items and figures from:
+- Income Statement / Statement of Operations (all line items, current AND prior periods for YoY comparison)
+- Balance Sheet / Statement of Financial Position (all line items, assets, liabilities, equity)
+- Cash Flow Statement (operating, investing, financing sections — all line items)
+- Notes to Financial Statements (debt schedules, maturities, rates, capital structure details)
+- Any segment or geographic breakdown tables
+- Any MD&A tables with key metrics
 
 Extract the following comprehensively:
 1. Company name, ticker, filing type (10-K/10-Q/8-K/S-1/etc), filing date, period covered
-2. Executive summary
-3. ALL financial metrics with YoY changes
-4. Revenue breakdown by segment
-5. Profitability metrics (gross margin, operating margin, net margin, EBITDA, EPS)
-6. Balance sheet highlights
-7. Cash flow summary (operating, investing, financing, free cash flow)
-8. CAPITAL STRUCTURE: Provide a full breakdown of the company's capital structure including:
-   - Total capitalization and the equity/debt split (as % of total cap)
+2. Executive summary — based on actual reported results, not forward-looking language
+3. ALL financial highlights with exact figures and YoY changes (use numbers from the tables)
+4. Revenue breakdown by segment — pull from segment tables in the notes or MD&A
+5. Profitability metrics — exact gross margin, operating margin, net margin, EBITDA, EPS (basic and diluted)
+6. Balance sheet — all major line items with exact values
+7. Cash flow — all three sections with exact line item totals
+8. CAPITAL STRUCTURE (pull from balance sheet + debt schedule notes):
+   - Total capitalization and equity/debt split (% of total cap)
    - Equity: common equity, preferred equity, shares outstanding, market cap, book value per share
    - Debt: total debt, short-term vs long-term, weighted average interest rate
-   - ALL individual debt instruments (bonds, notes, credit facilities, term loans, etc.) with: name, type, outstanding amount, maturity date, interest rate, and cost basis (issue price or yield-to-maturity if available)
-   - Any other capital components (warrants, convertibles, etc.)
-9. FINANCING ACTIVITY: Identify any recent or disclosed financing transactions in this filing period:
-   - Type of financing (equity offering, debt issuance, credit facility, convertible notes, IPO, etc.)
-   - Instrument name/description
-   - Transaction date
-   - Amount raised
-   - Detailed structure of the financing
-   - Cost basis (price per share, issue price, spread, yield, OID, etc.)
-   - Interest rate or yield (if debt)
+   - EVERY individual debt instrument listed in the notes (bonds, notes, term loans, revolvers, etc.) — include name, type, outstanding principal, maturity date, interest rate/coupon, and cost basis or issue yield if disclosed
+   - Any other capital components (convertibles, warrants, minority interest, etc.)
+9. FINANCING ACTIVITY (pull from cash flow statement financing section + notes + 8-K disclosures if present):
+   - Every financing transaction: type, instrument name, date, amount raised/borrowed/repaid
+   - Full structure of each transaction
+   - Cost basis: price per share, issue price, OID, spread, yield, all-in cost
+   - Interest rate or yield for debt instruments
    - Maturity or term
    - Use of proceeds
    - Underwriters or counterparties
-   - Key terms and covenants
-10. Key risk factors with severity levels
-11. Notable insights and observations
+   - Key terms, covenants, collateral
+10. Key risk factors with severity
+11. Notable analyst-level insights
 
-Be extremely thorough on capital structure and financing — extract every debt instrument and financing transaction mentioned.`;
+Return exact numbers from tables. If a number appears in a table, use that exact figure — do not round or paraphrase.`;
 
       const analysisResult = await base44.integrations.Core.InvokeLLM({
         prompt,
         response_json_schema: JSON_SCHEMA,
         ...(isUrl
-          ? { add_context_from_internet: true, model: "gemini_3_pro" }
+          ? { add_context_from_internet: true, model: "gemini_3_1_pro" }
           : { file_urls: [file_url], model: "claude_sonnet_4_6" }),
       });
 
