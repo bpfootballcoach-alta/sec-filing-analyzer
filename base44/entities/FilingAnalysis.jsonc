@@ -1,0 +1,216 @@
+{
+  "name": "FilingAnalysis",
+  "type": "object",
+  "properties": {
+    "file_name": {
+      "type": "string",
+      "description": "Original file name of the uploaded filing"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "URL of the uploaded filing"
+    },
+    "filing_type": {
+      "type": "string",
+      "description": "Type of SEC filing (10-K, 10-Q, 8-K, etc.)"
+    },
+    "company_name": {
+      "type": "string",
+      "description": "Name of the company"
+    },
+    "ticker": {
+      "type": "string",
+      "description": "Stock ticker symbol"
+    },
+    "filing_date": {
+      "type": "string",
+      "description": "Date of the filing"
+    },
+    "period_covered": {
+      "type": "string",
+      "description": "Period covered by the filing"
+    },
+    "executive_summary": {
+      "type": "string",
+      "description": "High-level executive summary"
+    },
+    "financial_highlights": {
+      "type": "array",
+      "description": "Key financial metrics extracted",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "revenue_data": {
+      "type": "object",
+      "description": "Revenue breakdown data",
+      "properties": {
+        "total_revenue": {
+          "type": "string"
+        },
+        "revenue_growth": {
+          "type": "string"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "string"
+              },
+              "percentage": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "profitability": {
+      "type": "object",
+      "description": "Profitability metrics",
+      "properties": {
+        "gross_margin": {
+          "type": "string"
+        },
+        "operating_margin": {
+          "type": "string"
+        },
+        "net_margin": {
+          "type": "string"
+        },
+        "ebitda": {
+          "type": "string"
+        },
+        "eps": {
+          "type": "string"
+        }
+      }
+    },
+    "balance_sheet": {
+      "type": "object",
+      "description": "Key balance sheet items",
+      "properties": {
+        "total_assets": {
+          "type": "string"
+        },
+        "total_liabilities": {
+          "type": "string"
+        },
+        "total_equity": {
+          "type": "string"
+        },
+        "cash_and_equivalents": {
+          "type": "string"
+        },
+        "total_debt": {
+          "type": "string"
+        },
+        "debt_to_equity": {
+          "type": "string"
+        }
+      }
+    },
+    "financing_data": {
+      "type": "object",
+      "description": "Financing and capital structure data",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "risk_factors": {
+      "type": "array",
+      "description": "Key risk factors identified",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "key_insights": {
+      "type": "array",
+      "description": "Notable insights and observations",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cash_flow": {
+      "type": "object",
+      "description": "Cash flow summary",
+      "properties": {
+        "operating": {
+          "type": "string"
+        },
+        "investing": {
+          "type": "string"
+        },
+        "financing": {
+          "type": "string"
+        },
+        "free_cash_flow": {
+          "type": "string"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "processing",
+        "completed",
+        "failed"
+      ],
+      "default": "processing"
+    }
+  },
+  "required": [
+    "file_name",
+    "file_url",
+    "status"
+  ]
+}
