@@ -53,7 +53,27 @@ export default function Dashboard() {
         type: "object", properties: {
           has_recent_financing: { type: "boolean" },
           summary: { type: "string" },
-          transactions: { type: "array", items: { type: "object", properties: { type: { type: "string" }, instrument: { type: "string" }, date: { type: "string" }, amount: { type: "string" }, structure: { type: "string" }, cost_basis: { type: "string" }, interest_rate_or_yield: { type: "string" }, maturity_or_term: { type: "string" }, use_of_proceeds: { type: "string" }, underwriters_or_parties: { type: "string" }, key_terms: { type: "string" } } } }
+          transactions: { type: "array", items: { type: "object", properties: {
+            type: { type: "string" },
+            instrument: { type: "string" },
+            date: { type: "string" },
+            amount: { type: "string" },
+            structure: { type: "string" },
+            cost_basis: { type: "string" },
+            interest_rate_or_yield: { type: "string" },
+            interest_rate_type: { type: "string" },
+            benchmark_and_spread: { type: "string" },
+            rate_floor: { type: "string" },
+            maturity_or_term: { type: "string" },
+            amortization: { type: "string" },
+            use_of_proceeds: { type: "string" },
+            collateral_or_security: { type: "string" },
+            covenants: { type: "string" },
+            call_put_conversion: { type: "string" },
+            underwriters_or_parties: { type: "string" },
+            key_terms: { type: "string" },
+            amendments_or_waivers: { type: "string" }
+          } } }
         }
       },
       narrative_highlights: {
@@ -135,8 +155,28 @@ Extract ALL of the following:
    - Every individual debt instrument: name, type, principal, maturity, rate, cost basis
    - Any convertibles, warrants, or other capital components
 
-10. FINANCING ACTIVITY (from cash flow + notes + disclosures):
-    - Every financing transaction with: type, instrument, date, amount, structure, cost basis, rate, maturity, use of proceeds, parties, key terms
+10. FINANCING ACTIVITY — This is critical. Read ALL of the following sources for financing detail:
+    - Statement of Cash Flows (financing section — every line item)
+    - Notes to Financial Statements (especially notes on debt, credit facilities, equity issuances, convertible instruments)
+    - MD&A section discussing liquidity and capital resources
+    - Any 8-K disclosures or exhibits referenced
+    - Subsequent events note (anything after period end)
+    For EVERY financing transaction found, extract:
+    - Type (e.g. Senior Secured Term Loan, Revolving Credit Facility, Senior Notes, Convertible Notes, Common Stock Offering, Preferred Stock, etc.)
+    - Full instrument name/description as stated in the filing
+    - Date of transaction or issuance
+    - Principal amount or proceeds raised
+    - Complete structure description (secured/unsecured, senior/subordinated, tranche details, drawn vs. undrawn, accordion features, etc.)
+    - Cost basis: exact issue price, OID (original issue discount), upfront fees, spread over benchmark, all-in yield, price per share for equity
+    - Interest rate: fixed or floating, exact rate or spread (e.g. SOFR + 350bps), floor if any, PIK vs cash
+    - Maturity date or term (including extension options)
+    - Amortization schedule if applicable
+    - Use of proceeds (exact language from filing)
+    - Collateral or security package
+    - Covenants (financial maintenance covenants, incurrence covenants, restricted payments, etc.)
+    - Underwriters, agents, or lenders
+    - Any call/put features, redemption premiums, conversion terms
+    - Any amendments, waivers, or modifications to existing facilities
 
 11. RISK FACTORS — summarize the most important risks disclosed, not just list headings. What is the company actually warning investors about? Assign severity.
 

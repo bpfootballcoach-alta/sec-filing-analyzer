@@ -72,13 +72,35 @@ function TransactionCard({ tx, index }) {
                 <p className="text-sm text-foreground leading-relaxed">{tx.structure}</p>
               </div>
             )}
-            <DetailRow label="Cost Basis / Price" value={tx.cost_basis} />
+            <DetailRow label="Cost Basis / Issue Price" value={tx.cost_basis} />
             <DetailRow label="Interest Rate / Yield" value={tx.interest_rate_or_yield} />
+            <DetailRow label="Rate Type" value={tx.interest_rate_type} />
+            <DetailRow label="Benchmark & Spread" value={tx.benchmark_and_spread} />
+            <DetailRow label="Rate Floor" value={tx.rate_floor} />
             <DetailRow label="Maturity / Term" value={tx.maturity_or_term} />
+            <DetailRow label="Amortization" value={tx.amortization} />
             {tx.use_of_proceeds && (
               <div className="py-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Use of Proceeds</p>
                 <p className="text-sm text-foreground leading-relaxed">{tx.use_of_proceeds}</p>
+              </div>
+            )}
+            {tx.collateral_or_security && (
+              <div className="py-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Collateral / Security</p>
+                <p className="text-sm text-foreground leading-relaxed">{tx.collateral_or_security}</p>
+              </div>
+            )}
+            {tx.covenants && (
+              <div className="py-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Covenants</p>
+                <p className="text-sm text-foreground leading-relaxed">{tx.covenants}</p>
+              </div>
+            )}
+            {tx.call_put_conversion && (
+              <div className="py-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Call / Put / Conversion</p>
+                <p className="text-sm text-foreground leading-relaxed">{tx.call_put_conversion}</p>
               </div>
             )}
             <DetailRow label="Underwriters / Parties" value={tx.underwriters_or_parties} />
@@ -86,6 +108,12 @@ function TransactionCard({ tx, index }) {
               <div className="py-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Key Terms</p>
                 <p className="text-sm text-foreground leading-relaxed">{tx.key_terms}</p>
+              </div>
+            )}
+            {tx.amendments_or_waivers && (
+              <div className="py-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Amendments / Waivers</p>
+                <p className="text-sm text-foreground leading-relaxed">{tx.amendments_or_waivers}</p>
               </div>
             )}
           </div>

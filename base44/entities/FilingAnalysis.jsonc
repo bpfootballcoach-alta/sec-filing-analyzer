@@ -3,40 +3,31 @@
   "type": "object",
   "properties": {
     "file_name": {
-      "type": "string",
-      "description": "Original file name of the uploaded filing"
+      "type": "string"
     },
     "file_url": {
-      "type": "string",
-      "description": "URL of the uploaded filing"
+      "type": "string"
     },
     "filing_type": {
-      "type": "string",
-      "description": "Type of SEC filing (10-K, 10-Q, 8-K, S-1, etc.)"
+      "type": "string"
     },
     "company_name": {
-      "type": "string",
-      "description": "Name of the company"
+      "type": "string"
     },
     "ticker": {
-      "type": "string",
-      "description": "Stock ticker symbol"
+      "type": "string"
     },
     "filing_date": {
-      "type": "string",
-      "description": "Date of the filing"
+      "type": "string"
     },
     "period_covered": {
-      "type": "string",
-      "description": "Period covered by the filing"
+      "type": "string"
     },
     "executive_summary": {
-      "type": "string",
-      "description": "High-level executive summary"
+      "type": "string"
     },
     "narrative_highlights": {
       "type": "object",
-      "description": "Key qualitative narrative disclosures from the filing",
       "properties": {
         "management_commentary": {
           "type": "string"
@@ -63,7 +54,6 @@
     },
     "financial_highlights": {
       "type": "array",
-      "description": "Key financial metrics extracted",
       "items": {
         "type": "object",
         "properties": {
@@ -84,7 +74,6 @@
     },
     "revenue_data": {
       "type": "object",
-      "description": "Revenue breakdown data",
       "properties": {
         "total_revenue": {
           "type": "string"
@@ -113,7 +102,6 @@
     },
     "profitability": {
       "type": "object",
-      "description": "Profitability metrics",
       "properties": {
         "gross_margin": {
           "type": "string"
@@ -134,7 +122,6 @@
     },
     "balance_sheet": {
       "type": "object",
-      "description": "Key balance sheet items",
       "properties": {
         "total_assets": {
           "type": "string"
@@ -156,9 +143,25 @@
         }
       }
     },
+    "cash_flow": {
+      "type": "object",
+      "properties": {
+        "operating": {
+          "type": "string"
+        },
+        "investing": {
+          "type": "string"
+        },
+        "financing": {
+          "type": "string"
+        },
+        "free_cash_flow": {
+          "type": "string"
+        }
+      }
+    },
     "capital_structure": {
       "type": "object",
-      "description": "Full capital structure breakdown",
       "properties": {
         "summary": {
           "type": "string"
@@ -259,7 +262,6 @@
     },
     "financing_activity": {
       "type": "object",
-      "description": "Recent financing transactions and activities",
       "properties": {
         "has_recent_financing": {
           "type": "boolean"
@@ -293,16 +295,40 @@
               "interest_rate_or_yield": {
                 "type": "string"
               },
+              "interest_rate_type": {
+                "type": "string"
+              },
+              "benchmark_and_spread": {
+                "type": "string"
+              },
+              "rate_floor": {
+                "type": "string"
+              },
               "maturity_or_term": {
                 "type": "string"
               },
+              "amortization": {
+                "type": "string"
+              },
               "use_of_proceeds": {
+                "type": "string"
+              },
+              "collateral_or_security": {
+                "type": "string"
+              },
+              "covenants": {
+                "type": "string"
+              },
+              "call_put_conversion": {
                 "type": "string"
               },
               "underwriters_or_parties": {
                 "type": "string"
               },
               "key_terms": {
+                "type": "string"
+              },
+              "amendments_or_waivers": {
                 "type": "string"
               }
             }
@@ -312,7 +338,6 @@
     },
     "financing_data": {
       "type": "object",
-      "description": "Financing and capital structure data (legacy)",
       "properties": {
         "summary": {
           "type": "string"
@@ -338,7 +363,6 @@
     },
     "risk_factors": {
       "type": "array",
-      "description": "Key risk factors identified",
       "items": {
         "type": "object",
         "properties": {
@@ -356,27 +380,8 @@
     },
     "key_insights": {
       "type": "array",
-      "description": "Notable insights and observations",
       "items": {
         "type": "string"
-      }
-    },
-    "cash_flow": {
-      "type": "object",
-      "description": "Cash flow summary",
-      "properties": {
-        "operating": {
-          "type": "string"
-        },
-        "investing": {
-          "type": "string"
-        },
-        "financing": {
-          "type": "string"
-        },
-        "free_cash_flow": {
-          "type": "string"
-        }
       }
     },
     "status": {
