@@ -58,8 +58,9 @@ export default function Dashboard() {
       const detectionResult = await base44.integrations.Core.InvokeLLM({
         prompt: buildDetectionPrompt(file_url, isUrl),
         response_json_schema: DETECTION_SCHEMA,
+        model: "gemini_3_flash",
         ...(isUrl
-          ? { add_context_from_internet: true, model: "gemini_3_flash" }
+          ? { add_context_from_internet: true }
           : { file_urls: [file_url] }),
       });
 
@@ -78,9 +79,10 @@ export default function Dashboard() {
       const extractionResult = await base44.integrations.Core.InvokeLLM({
         prompt: buildExtractionPrompt(file_url, isUrl, filingType),
         response_json_schema: EXTRACTION_SCHEMA,
+        model: "gemini_3_flash",
         ...(isUrl
-          ? { add_context_from_internet: true, model: "gemini_3_1_pro" }
-          : { file_urls: [file_url], model: "claude_sonnet_4_6" }),
+          ? { add_context_from_internet: true }
+          : { file_urls: [file_url] }),
       });
 
       await base44.entities.FilingAnalysis.update(record.id, {
