@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Trash2,
   MessageSquare,
+  Download,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,88 @@ export default function AnalysisDetail() {
     mutationFn: () => base44.entities.FilingAnalysis.delete(analysisId),
     onSuccess: () => navigate("/"),
   });
+
+  const exportHtml = () => {
+    const a = analysis;
+    const rows = (arr) => arr?.map(r => `<tr><td>${r.label||r.title||r.name||''}</td><td>${r.value||r.description||r.amount||''}</td></tr>`).join("") || "";
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>${a.company_name || a.file_name} — ${a.filing_type || "SEC Filing"}</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; }
+  h1 { font-size: 2rem; margin-bottom: 4px; }
+  h2 { font-size: 1.2rem; border-bottom: 2px solid #c9a84c; padding-bottom: 6px; margin-top: 32px; color: #1a1a2e; }
+  .meta { color: #666; font-size: 0.9rem; margin-bottom: 24px; }
+  .badge { display: inline-block; background: #c9a84c; color: #fff; padding: 2px 10px; border-radius: 4px; font-size: 0.85rem; margin-right: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  td, th { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  td:last-child { font-weight: 600; text-align: right; }
+  p { line-height: 1.7; font-size: 0.95rem; color: #333; }
+  .insight { padding: 6px 0; font-size: 0.9rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+  .risk { margin-bottom: 12px; }
+  .risk-title { font-weight: 600; }
+  .risk-desc { font-size: 0.9rem; color: #555; }
+</style>
+</head>
+<body>
+<span class="badge">${a.filing_type||''}</span>${a.ticker ? `<span class="badge" style="background:#1a1a2e">${a.ticker}</span>` : ''}
+<h1>${a.company_name || a.file_name}</h1>
+<div class="meta">
+  ${a.filing_date ? `Filed: ${a.filing_date} &nbsp;|&nbsp;` : ''}
+  ${a.period_covered ? `Period: ${a.period_covered} &nbsp;|&nbsp;` : ''}
+  Analyzed: ${new Date(a.created_date).toLocaleDateString()}
+</div>
+
+${a.executive_summary ? `<h2>Executive Summary</h2><p>${a.executive_summary}</p>` : ''}
+
+${a.financial_highlights?.length ? `<h2>Financial Highlights</h2><table>${rows(a.financial_highlights)}</table>` : ''}
+
+${a.revenue_data?.total_revenue ? `<h2>Revenue</h2><table>
+  <tr><td>Total Revenue</td><td>${a.revenue_data.total_revenue}</td></tr>
+  ${a.revenue_data.revenue_growth ? `<tr><td>Revenue Growth</td><td>${a.revenue_data.revenue_growth}</td></tr>` : ''}
+  ${a.revenue_data.segments?.map(s=>`<tr><td>${s.name}</td><td>${s.amount||''} ${s.percentage?`(${s.percentage})`:''}</td></tr>`).join('')||''}
+</table>` : ''}
+
+${a.profitability ? `<h2>Profitability</h2><table>
+  ${a.profitability.gross_margin?`<tr><td>Gross Margin</td><td>${a.profitability.gross_margin}</td></tr>`:''}
+  ${a.profitability.operating_margin?`<tr><td>Operating Margin</td><td>${a.profitability.operating_margin}</td></tr>`:''}
+  ${a.profitability.net_margin?`<tr><td>Net Margin</td><td>${a.profitability.net_margin}</td></tr>`:''}
+  ${a.profitability.ebitda?`<tr><td>EBITDA</td><td>${a.profitability.ebitda}</td></tr>`:''}
+  ${a.profitability.eps?`<tr><td>EPS</td><td>${a.profitability.eps}</td></tr>`:''}
+</table>` : ''}
+
+${a.balance_sheet ? `<h2>Balance Sheet</h2><table>
+  ${a.balance_sheet.total_assets?`<tr><td>Total Assets</td><td>${a.balance_sheet.total_assets}</td></tr>`:''}
+  ${a.balance_sheet.total_liabilities?`<tr><td>Total Liabilities</td><td>${a.balance_sheet.total_liabilities}</td></tr>`:''}
+  ${a.balance_sheet.total_equity?`<tr><td>Total Equity</td><td>${a.balance_sheet.total_equity}</td></tr>`:''}
+  ${a.balance_sheet.cash_and_equivalents?`<tr><td>Cash & Equivalents</td><td>${a.balance_sheet.cash_and_equivalents}</td></tr>`:''}
+  ${a.balance_sheet.total_debt?`<tr><td>Total Debt</td><td>${a.balance_sheet.total_debt}</td></tr>`:''}
+  ${a.balance_sheet.debt_to_equity?`<tr><td>Debt-to-Equity</td><td>${a.balance_sheet.debt_to_equity}</td></tr>`:''}
+</table>` : ''}
+
+${a.cash_flow ? `<h2>Cash Flow</h2><table>
+  ${a.cash_flow.operating?`<tr><td>Operating</td><td>${a.cash_flow.operating}</td></tr>`:''}
+  ${a.cash_flow.investing?`<tr><td>Investing</td><td>${a.cash_flow.investing}</td></tr>`:''}
+  ${a.cash_flow.financing?`<tr><td>Financing</td><td>${a.cash_flow.financing}</td></tr>`:''}
+  ${a.cash_flow.free_cash_flow?`<tr><td>Free Cash Flow</td><td>${a.cash_flow.free_cash_flow}</td></tr>`:''}
+</table>` : ''}
+
+${a.key_insights?.length ? `<h2>Key Insights</h2>${a.key_insights.map((ins,i)=>`<div class="insight">${i+1}. ${ins}</div>`).join('')}` : ''}
+
+${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div class="risk"><div class="risk-title">${r.title}</div><div class="risk-desc">${r.description||''}</div></div>`).join('')}` : ''}
+
+</body></html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(a.company_name || a.file_name || "analysis").replace(/[^a-z0-9]/gi, "_")}_${a.filing_type || "filing"}.html`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (isLoading) {
     return (
@@ -115,6 +198,9 @@ export default function AnalysisDetail() {
             <ArrowLeft className="w-4 h-4" /> Back
           </Link>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={exportHtml}>
+              <Download className="w-4 h-4 mr-2" /> Export HTML
+            </Button>
             {analysis.file_url && (
               <a href={analysis.file_url} target="_blank" rel="noopener noreferrer">
                 <Button variant="outline" size="sm">
