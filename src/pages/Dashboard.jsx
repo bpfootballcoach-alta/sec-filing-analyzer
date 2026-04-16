@@ -39,8 +39,15 @@ export default function Dashboard() {
       let file_url, fileName;
 
       if (isUrl) {
-        file_url = url;
-        fileName = url.split("/").pop().split("?")[0] || url;
+        // Convert SEC iXBRL viewer URLs (ix?doc=...) to the direct document URL
+        let resolvedUrl = url;
+        const ixMatch = url.match(/[?&]doc=([^&]+)/);
+        if (ixMatch) {
+          const docPath = decodeURIComponent(ixMatch[1]);
+          resolvedUrl = docPath.startsWith("http") ? docPath : `https://www.sec.gov${docPath}`;
+        }
+        file_url = resolvedUrl;
+        fileName = resolvedUrl.split("/").pop().split("?")[0] || resolvedUrl;
       } else {
         const uploaded = await base44.integrations.Core.UploadFile({ file });
         file_url = uploaded.file_url;
