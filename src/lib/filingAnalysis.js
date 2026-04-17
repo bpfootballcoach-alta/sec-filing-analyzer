@@ -268,14 +268,21 @@ const FILING_INSTRUCTIONS = {
 
 export function buildDetectionPrompt(fileRef, isUrl) {
   const source = isUrl
-    ? `The filing is at this URL: ${fileRef}. Fetch and read the document.`
+    ? `Fetch and read the document at this exact URL: ${fileRef}`
     : `Read the attached filing document.`;
 
   return `${source}
 
-Identify the following basic facts about this SEC filing. Just read the cover page, header, and first few pages.
+You are reading an SEC filing. Extract the following facts ONLY from the document itself — do NOT use any external knowledge or web search results.
 
-Return: company name, ticker symbol, filing type (exactly as stated — 10-K, 10-Q, 8-K, S-1, etc.), filing date, and period covered.`;
+Return EXACTLY what is printed on the cover page of this specific document:
+- company_name: The exact legal name of the registrant as printed on the cover
+- ticker: The trading symbol listed on the cover page
+- filing_type: The form type (10-K, 10-Q, 8-K, S-1, etc.) as stated on the cover
+- filing_date: The filing date
+- period_covered: The fiscal period this filing covers
+
+CRITICAL: Base your answer solely on the text in this document. Do not guess or use outside information.`;
 }
 
 export function buildExtractionPrompt(fileRef, isUrl, filingType) {
@@ -286,8 +293,8 @@ export function buildExtractionPrompt(fileRef, isUrl, filingType) {
   const instructions = FILING_INSTRUCTIONS[normalizedType];
 
   const source = isUrl
-    ? `The filing is available at this URL: ${fileRef}\nFetch and read the COMPLETE document — every page, every table, every footnote, every exhibit reference.`
-    : `Read every page of the attached filing document — every table, footnote, and schedule.`;
+    ? `Fetch and read the COMPLETE document at this exact URL: ${fileRef} — every page, every table, every footnote, every exhibit reference. Base ALL answers ONLY on the content of this specific document.`
+    : `Read every page of the attached filing document — every table, footnote, and schedule. Base ALL answers ONLY on the content of this specific document.`;
 
   return `You are an expert SEC filing analyst. This is a ${filingType || "SEC filing"}.
 
