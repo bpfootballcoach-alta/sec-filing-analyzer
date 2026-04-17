@@ -61,12 +61,17 @@ export default function Dashboard() {
         status: "processing",
       });
 
+      // Determine how to pass the document to the LLM
+      // PDFs can be passed as file_urls; HTML/URLs must use add_context_from_internet
+      const isPdf = file_url.toLowerCase().endsWith(".pdf");
+      const llmFileParam = isPdf ? { file_urls: [file_url] } : { add_context_from_internet: true };
+
       // PASS 1: Detect filing type quickly (fast, cheap call)
       const detectionResult = await base44.integrations.Core.InvokeLLM({
         prompt: buildDetectionPrompt(file_url, isUrl),
         response_json_schema: DETECTION_SCHEMA,
         model: "gemini_3_flash",
-        file_urls: [file_url],
+        ...llmFileParam,
       });
 
       const filingType = detectionResult.filing_type || "Unknown";
@@ -85,7 +90,7 @@ export default function Dashboard() {
         prompt: buildExtractionPrompt(file_url, isUrl, filingType),
         response_json_schema: EXTRACTION_SCHEMA,
         model: "gemini_3_flash",
-        file_urls: [file_url],
+        ...llmFileParam,
       });
 
       await base44.entities.FilingAnalysis.update(record.id, {

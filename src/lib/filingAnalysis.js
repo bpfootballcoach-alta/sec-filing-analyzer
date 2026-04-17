@@ -268,21 +268,20 @@ const FILING_INSTRUCTIONS = {
 
 export function buildDetectionPrompt(fileRef, isUrl) {
   const source = isUrl
-    ? `Fetch and read the document at this exact URL: ${fileRef}`
+    ? `STEP 1: Open and read the full HTML content at this exact URL: ${fileRef}
+STEP 2: Extract data ONLY from what you read at that URL. Do NOT use search results, cached data, or any prior knowledge about this company.`
     : `Read the attached filing document.`;
 
   return `${source}
 
-You are reading an SEC filing. Extract the following facts ONLY from the document itself — do NOT use any external knowledge or web search results.
+From the document you just fetched, return EXACTLY what is printed on its cover page:
+- company_name: The registrant's legal name as it appears in the document
+- ticker: The trading symbol as it appears in the document
+- filing_type: The form type (10-K, 10-Q, 8-K, S-1, etc.) as stated in the document
+- filing_date: The filing date as stated in the document
+- period_covered: The fiscal period as stated in the document
 
-Return EXACTLY what is printed on the cover page of this specific document:
-- company_name: The exact legal name of the registrant as printed on the cover
-- ticker: The trading symbol listed on the cover page
-- filing_type: The form type (10-K, 10-Q, 8-K, S-1, etc.) as stated on the cover
-- filing_date: The filing date
-- period_covered: The fiscal period this filing covers
-
-CRITICAL: Base your answer solely on the text in this document. Do not guess or use outside information.`;
+CRITICAL: Your answer must come exclusively from the text at that URL. Ignore all search results.`;
 }
 
 export function buildExtractionPrompt(fileRef, isUrl, filingType) {
