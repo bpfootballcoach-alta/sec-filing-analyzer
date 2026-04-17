@@ -66,9 +66,7 @@ export default function Dashboard() {
         prompt: buildDetectionPrompt(file_url, isUrl),
         response_json_schema: DETECTION_SCHEMA,
         model: "gemini_3_flash",
-        ...(isUrl
-          ? { add_context_from_internet: true }
-          : { file_urls: [file_url] }),
+        file_urls: [file_url],
       });
 
       const filingType = detectionResult.filing_type || "Unknown";
@@ -87,9 +85,7 @@ export default function Dashboard() {
         prompt: buildExtractionPrompt(file_url, isUrl, filingType),
         response_json_schema: EXTRACTION_SCHEMA,
         model: "gemini_3_flash",
-        ...(isUrl
-          ? { add_context_from_internet: true }
-          : { file_urls: [file_url] }),
+        file_urls: [file_url],
       });
 
       await base44.entities.FilingAnalysis.update(record.id, {
