@@ -284,6 +284,89 @@ From the document you just fetched, return EXACTLY what is printed on its cover 
 CRITICAL: Your answer must come exclusively from the text at that URL. Ignore all search results.`;
 }
 
+// Helper: parse a JSON object out of a raw LLM text response
+export function parseJsonFromText(text) {
+  if (typeof text === "object" && text !== null) return text;
+  // Strip markdown code fences if present
+  const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  // Find the outermost {...}
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1) return {};
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+// Detection prompt for URL path (no json schema — ask model to return raw JSON)
+export function buildDetectionPromptJson(url) {
+  return `Fetch and read the document at this exact URL: ${url}
+
+From the document, extract and return ONLY a valid JSON object (no markdown, no commentary) with exactly these fields:
+{
+  "filing_type": "...",
+  "company_name": "...",
+  "ticker": "...",
+  "filing_date": "...",
+  "period_covered": "..."
+}
+
+Use only what is printed in the document. Do not use prior knowledge.`;
+}
+
+// Extraction prompt for URL path (no json schema — ask model to return raw JSON)
+export function buildExtractionPromptJson(url, filingType) {
+  const normalizedType = Object.keys(FILING_INSTRUCTIONS).find(
+    (k) => filingType?.toUpperCase().includes(k)
+  ) || "DEFAULT";
+  const instructions = FILING_INSTRUCTIONS[normalizedType];
+
+  return `You are an expert financial analyst. Fetch and read the COMPLETE document at this exact URL: ${url}
+
+FILING TYPE: ${filingType || "SEC filing"}
+
+Extract all data from the document and return ONLY a valid JSON object (no markdown fences, no commentary before or after). The JSON must follow this structure exactly — omit fields you cannot find, but do not invent data:
+
+{
+  "company_name": "",
+  "ticker": "",
+  "filing_type": "",
+  "filing_date": "",
+  "period_covered": "",
+  "executive_summary": "",
+  "narrative_highlights": {
+    "management_commentary": "",
+    "business_developments": "",
+    "legal_regulatory": "",
+    "going_concern_or_restatements": "",
+    "guidance_and_outlook": "",
+    "significant_events": "",
+    "overall_tone": ""
+  },
+  "financial_highlights": [{"label": "", "value": "", "change": "", "category": ""}],
+  "revenue_data": {"total_revenue": "", "revenue_growth": "", "segments": [{"name": "", "amount": "", "percentage": ""}]},
+  "profitability": {"gross_margin": "", "operating_margin": "", "net_margin": "", "ebitda": "", "eps": ""},
+  "balance_sheet": {"total_assets": "", "total_liabilities": "", "total_equity": "", "cash_and_equivalents": "", "total_debt": "", "debt_to_equity": ""},
+  "cash_flow": {"operating": "", "investing": "", "financing": "", "free_cash_flow": ""},
+  "capital_structure": {
+    "summary": "", "total_capitalization": "",
+    "equity": {"common_equity": "", "preferred_equity": "", "shares_outstanding": "", "market_cap": "", "book_value_per_share": "", "equity_percentage_of_cap": ""},
+    "debt": {"total_debt": "", "short_term_debt": "", "long_term_debt": "", "debt_percentage_of_cap": "", "weighted_average_interest_rate": "", "debt_instruments": [{"name": "", "type": "", "amount": "", "maturity": "", "interest_rate": "", "cost_basis": "", "notes": ""}]},
+    "other_components": [{"name": "", "amount": "", "description": ""}]
+  },
+  "financing_activity": {
+    "has_recent_financing": false,
+    "summary": "",
+    "transactions": [{"type": "", "instrument": "", "date": "", "amount": "", "structure": "", "cost_basis": "", "interest_rate_or_yield": "", "interest_rate_type": "", "benchmark_and_spread": "", "rate_floor": "", "maturity_or_term": "", "amortization": "", "use_of_proceeds": "", "collateral_or_security": "", "covenants": "", "call_put_conversion": "", "underwriters_or_parties": "", "key_terms": "", "amendments_or_waivers": ""}]
+  },
+  "financing_data": {"summary": "", "details": [{"type": "", "description": "", "amount": ""}]},
+  "risk_factors": [{"title": "", "description": "", "severity": ""}],
+  "key_insights": [""]
+}
+
+CRITICAL: Return ONLY the JSON object. No explanation. No markdown. Start your response with { and end with }.
+
+${instructions}`;
+}
+
 export function buildExtractionPrompt(fileRef, isUrl, filingType) {
   const normalizedType = Object.keys(FILING_INSTRUCTIONS).find(
     (k) => filingType?.toUpperCase().includes(k)

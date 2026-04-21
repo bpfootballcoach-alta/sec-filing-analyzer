@@ -12,6 +12,9 @@ import {
   EXTRACTION_SCHEMA,
   buildDetectionPrompt,
   buildExtractionPrompt,
+  buildDetectionPromptJson,
+  buildExtractionPromptJson,
+  parseJsonFromText,
 } from "@/lib/filingAnalysis";
 
 export default function Dashboard() {
@@ -62,38 +65,62 @@ export default function Dashboard() {
       });
 
       // Determine how to pass the document to the LLM
-      // PDFs can be passed as file_urls; HTML/URLs must use add_context_from_internet
+      // PDFs → file_urls + response_json_schema (gemini_3_flash)
+      // HTML URLs → add_context_from_internet (gemini_3_1_pro) but gemini does NOT support
+      // response_json_schema with search. So for URLs we ask for JSON in the prompt and parse it.
       const isPdf = file_url.toLowerCase().endsWith(".pdf");
-      const llmFileParam = isPdf ? { file_urls: [file_url] } : { add_context_from_internet: true };
-      // Use a more capable model for web-fetched HTML docs; flash is fine for PDFs
-      const llmModel = isPdf ? "gemini_3_flash" : "gemini_3_1_pro";
 
-      // PASS 1: Detect filing type quickly
-      const detectionResult = await base44.integrations.Core.InvokeLLM({
-        prompt: buildDetectionPrompt(file_url, isUrl),
-        response_json_schema: DETECTION_SCHEMA,
-        model: llmModel,
-        ...llmFileParam,
-      });
+      let detectionResult, extractionResult;
 
-      const filingType = detectionResult.filing_type || "Unknown";
+      if (isPdf) {
+        // PDF path: structured JSON schema supported
+        detectionResult = await base44.integrations.Core.InvokeLLM({
+          prompt: buildDetectionPrompt(file_url, false),
+          response_json_schema: DETECTION_SCHEMA,
+          model: "gemini_3_flash",
+          file_urls: [file_url],
+        });
 
-      // Update record with basic info so the card shows the company name ASAP
-      await base44.entities.FilingAnalysis.update(record.id, {
-        company_name: detectionResult.company_name,
-        ticker: detectionResult.ticker,
-        filing_type: filingType,
-        filing_date: detectionResult.filing_date,
-        period_covered: detectionResult.period_covered,
-      });
+        const filingType = detectionResult.filing_type || "Unknown";
+        await base44.entities.FilingAnalysis.update(record.id, {
+          company_name: detectionResult.company_name,
+          ticker: detectionResult.ticker,
+          filing_type: filingType,
+          filing_date: detectionResult.filing_date,
+          period_covered: detectionResult.period_covered,
+        });
 
-      // PASS 2: Full extraction with filing-type-aware prompt
-      const extractionResult = await base44.integrations.Core.InvokeLLM({
-        prompt: buildExtractionPrompt(file_url, isUrl, filingType),
-        response_json_schema: EXTRACTION_SCHEMA,
-        model: llmModel,
-        ...llmFileParam,
-      });
+        extractionResult = await base44.integrations.Core.InvokeLLM({
+          prompt: buildExtractionPrompt(file_url, false, filingType),
+          response_json_schema: EXTRACTION_SCHEMA,
+          model: "gemini_3_flash",
+          file_urls: [file_url],
+        });
+      } else {
+        // URL path: gemini + search cannot use response_json_schema — ask for JSON in prompt, parse result
+        const detectionRaw = await base44.integrations.Core.InvokeLLM({
+          prompt: buildDetectionPromptJson(file_url),
+          model: "gemini_3_1_pro",
+          add_context_from_internet: true,
+        });
+        detectionResult = parseJsonFromText(detectionRaw);
+
+        const filingType = detectionResult.filing_type || "Unknown";
+        await base44.entities.FilingAnalysis.update(record.id, {
+          company_name: detectionResult.company_name,
+          ticker: detectionResult.ticker,
+          filing_type: filingType,
+          filing_date: detectionResult.filing_date,
+          period_covered: detectionResult.period_covered,
+        });
+
+        const extractionRaw = await base44.integrations.Core.InvokeLLM({
+          prompt: buildExtractionPromptJson(file_url, filingType),
+          model: "gemini_3_1_pro",
+          add_context_from_internet: true,
+        });
+        extractionResult = parseJsonFromText(extractionRaw);
+      }
 
       await base44.entities.FilingAnalysis.update(record.id, {
         ...extractionResult,
