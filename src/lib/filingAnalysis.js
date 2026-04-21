@@ -292,22 +292,30 @@ export function buildExtractionPrompt(fileRef, isUrl, filingType) {
   const instructions = FILING_INSTRUCTIONS[normalizedType];
 
   const source = isUrl
-    ? `Fetch and read the COMPLETE document at this exact URL: ${fileRef} — every page, every table, every footnote, every exhibit reference. Base ALL answers ONLY on the content of this specific document.`
+    ? `MANDATORY FIRST STEP: Fetch and read the COMPLETE document at this exact URL before doing anything else: ${fileRef}
+
+You MUST read every table, every bullet point, and every number in that document. Do NOT summarize from memory or external knowledge. The document is the ONLY source of truth.`
     : `Read every page of the attached filing document — every table, footnote, and schedule. Base ALL answers ONLY on the content of this specific document.`;
 
-  return `You are an expert SEC filing analyst. This is a ${filingType || "SEC filing"}.
+  return `You are an expert financial analyst extracting structured data from an SEC filing document.
 
 ${source}
 
-CRITICAL: Do NOT leave fields blank if the information exists anywhere in the document. Read the ENTIRE filing including all notes, exhibits, and schedules before responding.
+FILING TYPE: ${filingType || "SEC filing"}
+
+CRITICAL RULES:
+1. Extract data ONLY from the document at the URL above — not from memory, not from web search results
+2. Do NOT leave any field blank if the information exists anywhere in the document
+3. Use EXACT figures from tables — include units (billions, millions, thousands, VND, USD, etc.)
+4. If figures appear in both local currency AND USD, capture both (e.g. "VND 39,411.7 billion (US$1,568.9 million)")
+5. For ALL financial tables: extract every row, every column, every period shown (current quarter, prior quarter, YoY)
 
 ${instructions}
 
-UNIVERSAL REQUIREMENTS (apply to all filing types):
-- Use EXACT figures from tables — never estimate or round unless the filing itself does
-- For every financial figure, note the units (millions, thousands, etc.)
-- For narrative sections: write substantive summaries, not one-line descriptions
-- For financing transactions: extract every field available — rate type, benchmark, spread, floor, maturity, amortization, collateral, covenants, call/put features, underwriters
-- executive_summary: Write 4-6 sentences capturing what this filing says, what happened, management's tone, and anything notable or concerning
-- key_insights: Provide 5-8 analyst-quality observations — things that are unusual, significant, or worth flagging that may not be obvious from headline numbers`;
+UNIVERSAL REQUIREMENTS:
+- executive_summary: Write 4-6 dense sentences: what company, what filing, what period, key headline numbers, management tone, anything notable
+- financial_highlights: Extract EVERY metric with a number — revenue, deliveries, margins, costs, headcount, anything quantified. Include QoQ and YoY changes where shown
+- key_insights: 5-8 analyst-level observations — what is notable, unusual, impressive, or concerning that may not be obvious from headlines
+- For narrative sections: write substantive multi-sentence summaries, not one-liners
+- For financing: extract every term available — rate, maturity, collateral, covenants, use of proceeds, parties`;
 }

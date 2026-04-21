@@ -65,12 +65,14 @@ export default function Dashboard() {
       // PDFs can be passed as file_urls; HTML/URLs must use add_context_from_internet
       const isPdf = file_url.toLowerCase().endsWith(".pdf");
       const llmFileParam = isPdf ? { file_urls: [file_url] } : { add_context_from_internet: true };
+      // Use a more capable model for web-fetched HTML docs; flash is fine for PDFs
+      const llmModel = isPdf ? "gemini_3_flash" : "gemini_3_1_pro";
 
-      // PASS 1: Detect filing type quickly (fast, cheap call)
+      // PASS 1: Detect filing type quickly
       const detectionResult = await base44.integrations.Core.InvokeLLM({
         prompt: buildDetectionPrompt(file_url, isUrl),
         response_json_schema: DETECTION_SCHEMA,
-        model: "gemini_3_flash",
+        model: llmModel,
         ...llmFileParam,
       });
 
@@ -89,7 +91,7 @@ export default function Dashboard() {
       const extractionResult = await base44.integrations.Core.InvokeLLM({
         prompt: buildExtractionPrompt(file_url, isUrl, filingType),
         response_json_schema: EXTRACTION_SCHEMA,
-        model: "gemini_3_flash",
+        model: llmModel,
         ...llmFileParam,
       });
 
