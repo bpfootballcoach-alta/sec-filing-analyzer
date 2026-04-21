@@ -97,13 +97,21 @@ export default function Dashboard() {
           file_urls: [file_url],
         });
       } else {
-        // URL path: gemini + search cannot use response_json_schema — ask for JSON in prompt, parse result
-        const detectionRaw = await base44.integrations.Core.InvokeLLM({
-          prompt: buildDetectionPromptJson(file_url),
-          model: "gemini_3_1_pro",
-          add_context_from_internet: true,
+        // URL path: fetch the filing server-side, upload it, then analyze like a PDF
+        const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
+        const uploadedUrl = fetchRes.data?.file_url;
+
+        if (!uploadedUrl) {
+          throw new Error(fetchRes.data?.error || "Failed to fetch the filing from the provided URL");
+        }
+
+        // Now treat the uploaded file like a PDF — structured JSON schema works fine
+        detectionResult = await base44.integrations.Core.InvokeLLM({
+          prompt: buildDetectionPrompt(uploadedUrl, false),
+          response_json_schema: DETECTION_SCHEMA,
+          model: "gemini_3_flash",
+          file_urls: [uploadedUrl],
         });
-        detectionResult = parseJsonFromText(detectionRaw) || {};
 
         const filingType = detectionResult.filing_type || "Unknown";
         await base44.entities.FilingAnalysis.update(record.id, {
@@ -114,12 +122,12 @@ export default function Dashboard() {
           period_covered: detectionResult.period_covered || null,
         });
 
-        const extractionRaw = await base44.integrations.Core.InvokeLLM({
-          prompt: buildExtractionPromptJson(file_url, filingType),
-          model: "gemini_3_1_pro",
-          add_context_from_internet: true,
+        extractionResult = await base44.integrations.Core.InvokeLLM({
+          prompt: buildExtractionPrompt(uploadedUrl, false, filingType),
+          response_json_schema: EXTRACTION_SCHEMA,
+          model: "gemini_3_flash",
+          file_urls: [uploadedUrl],
         });
-        extractionResult = parseJsonFromText(extractionRaw) || {};
       }
 
       await base44.entities.FilingAnalysis.update(record.id, {
