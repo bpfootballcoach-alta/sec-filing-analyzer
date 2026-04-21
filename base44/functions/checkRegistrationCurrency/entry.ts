@@ -117,23 +117,56 @@ Deno.serve(async (req) => {
   }
 
   // --- CHECK 2: Quarterly Reports (10-Q) current? ---
+  // KEY RULE: There is NO Q4 10-Q. Companies file only Q1, Q2, Q3 (3 per year).
+  // Q4 is covered by the annual 10-K itself.
+  // Logic: determine how many 10-Qs are expected since the last 10-K was filed.
+  //   - If 10-K was filed < 45 days ago: no 10-Q yet due (still in Q1 window) → pass
+  //   - If 10-K was filed 45–135 days ago: Q1 10-Q should be filed → check
+  //   - If 10-K was filed 135–225 days ago: Q1 + Q2 should be filed → check
+  //   - If 10-K was filed 225–315 days ago: Q1 + Q2 + Q3 should be filed → check
+  //   - If 10-K was filed >315 days ago: all 3 Qs done, new 10-K coming due → check annual
+  //
+  // We determine expected 10-Qs since last 10-K and compare with actual 10-Qs filed after 10-K date.
+
   let quarterlyStatus, quarterlyDetail;
   if (isFPI) {
     quarterlyStatus = "info";
     quarterlyDetail = "Foreign Private Issuer — quarterly 10-Q not required; 6-K used for interim updates.";
-  } else if (!latestQuarterly) {
-    quarterlyStatus = "fail";
-    quarterlyDetail = "No 10-Q filings found. Company is not current on quarterly reporting.";
-  } else if (quarterlyDays > 135) {
-    // 10-Q due 40 days (large accel) or 45 days (others) after quarter end. >135 days = missed a quarter
-    quarterlyStatus = "fail";
-    quarterlyDetail = `Last 10-Q was filed ${quarterlyDays} days ago (${latestQuarterly.date}). Company appears delinquent on quarterly reporting.`;
-  } else if (quarterlyDays > 90) {
-    quarterlyStatus = "warn";
-    quarterlyDetail = `Last 10-Q was filed ${quarterlyDays} days ago (${latestQuarterly.date}). A new quarterly report may be coming due soon.`;
   } else {
-    quarterlyStatus = "pass";
-    quarterlyDetail = `Most recent 10-Q filed ${quarterlyDays} days ago on ${latestQuarterly.date}. Quarterly reporting is current.`;
+    const annualDate = latestAnnual ? new Date(latestAnnual.date) : null;
+    
+    // Count how many 10-Qs have been filed AFTER the last 10-K
+    const quartersFiledSinceAnnual = annualDate
+      ? filings.filter(f => f.form === "10-Q" && new Date(f.date) > annualDate).length
+      : 0;
+
+    // How many quarters are expected based on days since 10-K?
+    // Each quarter's 10-Q is due ~45 days after quarter end (~90 days per quarter cycle)
+    // Q1 due ~45 days after 10-K (i.e., annualDays > 45+45 = 90 days since 10-K)
+    // Q2 due ~annualDays > 90+90 = 180 days since 10-K
+    // Q3 due ~annualDays > 90+90+90 = 270 days since 10-K
+    let expectedQuarters = 0;
+    if (annualDays !== null) {
+      if (annualDays > 270) expectedQuarters = 3;
+      else if (annualDays > 180) expectedQuarters = 2;
+      else if (annualDays > 90) expectedQuarters = 1;
+      else expectedQuarters = 0; // Too soon after 10-K — no 10-Q due yet
+    }
+
+    if (!annualDate) {
+      quarterlyStatus = "warn";
+      quarterlyDetail = "Cannot determine 10-Q currency without a filed 10-K to establish fiscal year baseline.";
+    } else if (expectedQuarters === 0) {
+      quarterlyStatus = "pass";
+      quarterlyDetail = `10-K was filed ${annualDays} days ago (${latestAnnual.date}). No quarterly report due yet — still within the first quarter window after fiscal year end.`;
+    } else if (quartersFiledSinceAnnual >= expectedQuarters) {
+      quarterlyStatus = "pass";
+      quarterlyDetail = `${quartersFiledSinceAnnual} of ${expectedQuarters} expected 10-Q(s) filed since last 10-K (${latestAnnual.date}). Quarterly reporting is current. (Note: No Q4 10-Q is required — Q4 is covered by the 10-K.)`;
+    } else {
+      const missing = expectedQuarters - quartersFiledSinceAnnual;
+      quarterlyStatus = "fail";
+      quarterlyDetail = `Only ${quartersFiledSinceAnnual} of ${expectedQuarters} expected 10-Q(s) filed since the last 10-K (${latestAnnual.date}). ${missing} quarterly report(s) appear missing. Companies are required to file Q1, Q2, and Q3 10-Qs — there is no Q4 10-Q (that period is covered by the annual 10-K).`;
+    }
   }
 
   // --- CHECK 3: Current Reports (8-K) — has the company filed recently? ---
