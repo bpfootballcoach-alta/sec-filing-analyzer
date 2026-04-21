@@ -103,15 +103,15 @@ export default function Dashboard() {
           model: "gemini_3_1_pro",
           add_context_from_internet: true,
         });
-        detectionResult = parseJsonFromText(detectionRaw);
+        detectionResult = parseJsonFromText(detectionRaw) || {};
 
         const filingType = detectionResult.filing_type || "Unknown";
         await base44.entities.FilingAnalysis.update(record.id, {
-          company_name: detectionResult.company_name,
-          ticker: detectionResult.ticker,
+          company_name: detectionResult.company_name || null,
+          ticker: detectionResult.ticker || null,
           filing_type: filingType,
-          filing_date: detectionResult.filing_date,
-          period_covered: detectionResult.period_covered,
+          filing_date: detectionResult.filing_date || null,
+          period_covered: detectionResult.period_covered || null,
         });
 
         const extractionRaw = await base44.integrations.Core.InvokeLLM({
@@ -119,7 +119,7 @@ export default function Dashboard() {
           model: "gemini_3_1_pro",
           add_context_from_internet: true,
         });
-        extractionResult = parseJsonFromText(extractionRaw);
+        extractionResult = parseJsonFromText(extractionRaw) || {};
       }
 
       await base44.entities.FilingAnalysis.update(record.id, {

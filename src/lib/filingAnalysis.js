@@ -284,16 +284,22 @@ From the document you just fetched, return EXACTLY what is printed on its cover 
 CRITICAL: Your answer must come exclusively from the text at that URL. Ignore all search results.`;
 }
 
-// Helper: parse a JSON object out of a raw LLM text response
+// Helper: parse a JSON object out of a raw LLM text response (safe — never throws)
 export function parseJsonFromText(text) {
   if (typeof text === "object" && text !== null) return text;
-  // Strip markdown code fences if present
-  const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  // Find the outermost {...}
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1) return {};
-  return JSON.parse(cleaned.slice(start, end + 1));
+  if (typeof text !== "string" || !text.trim()) return {};
+  try {
+    // Strip markdown code fences if present
+    const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    // Find the outermost { ... }
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start === -1 || end === -1) return {};
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    // If parsing fails entirely, return an empty object so the rest of the flow continues
+    return {};
+  }
 }
 
 // Detection prompt for URL path (no json schema — ask model to return raw JSON)
