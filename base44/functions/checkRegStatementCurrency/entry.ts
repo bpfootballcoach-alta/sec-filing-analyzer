@@ -238,59 +238,79 @@ Deno.serve(async (req) => {
       filingForm: null,
     });
 
-    // --- CHECK A: Financial Statement Currency (Rule 3-12) ---
-    // Financial statements in a registration statement must not be more than 135 days old
-    // at effectiveness. After that, under Section 10(a)(3), annual updates are required.
+    // --- CHECK A: Section 10(a)(3) Prospectus Currency ---
+    //
+    // Section 10(a)(3): A prospectus included in a registration statement CANNOT be used
+    // after 9 months from its effective date unless it has been updated.
+    // Rule 3-12: Financial statements in the prospectus cannot be older than 16 months.
+    //
+    // For S-3/F-3 (shelf): automatically kept current via IBR of annual/quarterly reports.
+    //   Stale if: most recent 10-K is > 16 months old, OR company is not a current filer.
+    //
+    // For S-1/F-1 (non-shelf): prospectus stale after 9 months from effective date
+    //   UNLESS a POS AM, new 424B, or /A amendment has been filed that restarts the clock.
+    //   The clock runs from the effective date of the most recent update (POS AM/424B),
+    //   not from the original filing date.
+    //   Additionally, financial statements in the prospectus cannot be > 16 months old (Rule 3-12).
+
+    const NINE_MONTHS = 274;
+    const SIXTEEN_MONTHS = 487;
+
     let fsStatus, fsDetail;
+
     if (isShelf) {
-      if (latestAnnual) {
-        const annualDays = daysSince(latestAnnual.date);
-        if (annualDays <= 365) {
-          fsStatus = "pass";
-          fsDetail = `Shelf registration automatically updated via incorporation by reference of ${latestAnnual.form} filed ${annualDays} days ago (${latestAnnual.date}). Financial statements are current under Rule 3-12.`;
-        } else {
-          fsStatus = "fail";
-          fsDetail = `Last incorporated annual report (${latestAnnual.form}, ${latestAnnual.date}) is ${annualDays} days old. A new annual report must have been filed and incorporated to keep this shelf current under Section 10(a)(3).`;
-        }
-      } else {
+      // S-3/F-3: kept current via IBR of annual reports
+      if (!latestAnnual) {
         fsStatus = "fail";
-        fsDetail = "No annual report found after this shelf registration. Financial statements cannot be incorporated by reference — shelf is stale under Section 10(a)(3).";
+        fsDetail = `No annual report (10-K/20-F) filed after this shelf registration. A shelf prospectus requires at least one annual report incorporated by reference to remain current under Section 10(a)(3). Shelf is STALE.`;
+      } else {
+        const annualDays = daysSince(latestAnnual.date);
+        if (annualDays > SIXTEEN_MONTHS) {
+          fsStatus = "fail";
+          fsDetail = `Most recent annual report (${latestAnnual.form}, ${latestAnnual.date}) is ${annualDays} days old — exceeding the 16-month Rule 3-12 limit. This shelf prospectus is STALE under Section 10(a)(3). A new 10-K must be filed and incorporated by reference.`;
+        } else {
+          fsStatus = "pass";
+          fsDetail = `Shelf registration is kept current via incorporation by reference of ${latestAnnual.form} filed ${annualDays} days ago (${latestAnnual.date}). Financial statements are within the 16-month Rule 3-12 window. Prospectus is current under Section 10(a)(3).`;
+        }
       }
     } else {
-      // S-1/F-1: financial statements must not be older than 135 days at effectiveness
-      // After 9 months from filing, need a post-effective amendment (S-1/A) or new 424B
-      const nineMonths = 274;
-      const sixteenMonths = 487;
+      // S-1/F-1 non-shelf:
+      // The 9-month clock runs from the effective date of the prospectus (or most recent update).
+      // A POS AM or new 424B resets the clock from its own effective/filing date.
 
-      // Find the most recent update — 424B, pre-effective amendment, or POS AM
+      const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
+
+      // Most recent update that resets the 9-month clock: POS AM, 424B prospectus, or pre-effective /A
       const mostRecentUpdate = [latestAmendment, latestProspectus, latestPostEffective]
         .filter(Boolean)
         .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
 
-      const updateDays = mostRecentUpdate ? daysSince(mostRecentUpdate.date) : null;
-      const effectiveDays = updateDays !== null ? updateDays : regDays;
+      // The clock baseline: most recent update date, or effective date if no updates
+      const clockBaseDate = mostRecentUpdate ? new Date(mostRecentUpdate.date) : effectiveDate;
+      const daysSinceClock = Math.floor((new Date() - clockBaseDate) / (1000 * 60 * 60 * 24));
 
-      if (effectiveDays <= nineMonths) {
+      if (daysSinceClock > SIXTEEN_MONTHS) {
+        fsStatus = "fail";
+        fsDetail = `The prospectus (last updated: ${mostRecentUpdate?.form || selectedReg.form} on ${mostRecentUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — exceeding the 16-month Rule 3-12 financial statement age limit. Prospectus is STALE. A POS AM with updated financials is required immediately.`;
+      } else if (daysSinceClock > NINE_MONTHS) {
+        fsStatus = "fail";
+        fsDetail = `The prospectus (last updated: ${mostRecentUpdate?.form || selectedReg.form} on ${mostRecentUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — past the 9-month Section 10(a)(3) limit. A prospectus may NOT be used after 9 months from its effective date without being updated. A POS AM with current financial statements must be filed.`;
+      } else {
         fsStatus = "pass";
         fsDetail = mostRecentUpdate
-          ? `Most recent prospectus/amendment (${mostRecentUpdate.form}, ${mostRecentUpdate.date}) is ${effectiveDays} days old — within the Section 10(a)(3) 9-month window. Financial statements are current.`
-          : `Registration statement is ${regDays} days old — within the 9-month Section 10(a)(3) window. Financial statements are current.`;
-      } else if (effectiveDays <= sixteenMonths) {
-        fsStatus = "warn";
-        fsDetail = `Most recent document (${mostRecentUpdate?.form || selectedReg.form}, ${mostRecentUpdate?.date || selectedReg.date}) is ${effectiveDays} days old — past the 9-month Section 10(a)(3) threshold. A post-effective amendment (${baseForm}/A) or updated 424B is required to keep financial statements current. Financial statements may be stale.`;
-      } else {
-        fsStatus = "fail";
-        fsDetail = `Most recent document (${mostRecentUpdate?.form || selectedReg.form}, ${mostRecentUpdate?.date || selectedReg.date}) is ${effectiveDays} days old — past the 16-month Rule 3-12 financial statement age limit. Financial statements are STALE. A post-effective amendment with updated financials is required.`;
+          ? `Most recent prospectus update (${mostRecentUpdate.form}, ${mostRecentUpdate.date}) is ${daysSinceClock} days old — within the 9-month Section 10(a)(3) window. Prospectus is current.`
+          : `Registration effective ${daysSince(effectiveDate.toISOString().split("T")[0])} days ago — within the 9-month Section 10(a)(3) window. Prospectus is current.`;
       }
     }
+
     checks.push({
       id: "financial_statements",
-      label: "Financial Statement Currency (Rule 3-12 / Section 10(a)(3))",
+      label: "Prospectus Currency — Section 10(a)(3) (9-Month Rule)",
       status: fsStatus,
       detail: fsDetail,
-      filingDate: latestAmendment?.date || latestProspectus?.date || null,
-      filingUrl: edgarUrl(latestAmendment || latestProspectus),
-      filingForm: latestAmendment?.form || latestProspectus?.form || null,
+      filingDate: latestPostEffective?.date || latestProspectus?.date || latestAmendment?.date || null,
+      filingUrl: edgarUrl(latestPostEffective || latestProspectus || latestAmendment),
+      filingForm: latestPostEffective?.form || latestProspectus?.form || latestAmendment?.form || null,
     });
 
     // --- CHECK B: Annual Report Updates ---
@@ -384,17 +404,22 @@ Deno.serve(async (req) => {
     let amendStatus, amendDetail;
     if (isShelf) {
       amendStatus = "info";
-      amendDetail = "Shelf registrations (S-3/F-3) are kept current via annual report incorporation by reference — post-effective amendments (POS AM) are not required annually, though they may be filed for other updates.";
-    } else if (postEffectiveAmendments.length === 0 && regDays > 274) {
-      amendStatus = "warn";
-      amendDetail = `No post-effective amendments (POS AM) found after this registration statement, which is now ${regDays} days old. For ongoing offerings past 9 months, a POS AM with updated financial statements is generally required under Section 10(a)(3).`;
-    } else if (postEffectiveAmendments.length > 0) {
-      const aDays = daysSince(latestPostEffective.date);
-      amendStatus = aDays <= 274 ? "pass" : "warn";
-      amendDetail = `${postEffectiveAmendments.length} post-effective amendment(s) (POS AM) filed. Most recent: ${latestPostEffective.form} on ${latestPostEffective.date} (${aDays} days ago).`;
+      amendDetail = "Shelf registrations (S-3/F-3) are kept current via annual report incorporation by reference — POS AM filings are not required for Section 10(a)(3) compliance, though they may be filed for other updates.";
+    } else if (postEffectiveAmendments.length === 0) {
+      // No POS AM on record — check if one is required based on time since effective date
+      const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
+      const daysSinceEffective = Math.floor((new Date() - effectiveDate) / (1000 * 60 * 60 * 24));
+      if (daysSinceEffective > NINE_MONTHS && !latestProspectus) {
+        amendStatus = "warn";
+        amendDetail = `No POS AM or 424B prospectus found. This registration has been effective for ${daysSinceEffective} days (past the 9-month Section 10(a)(3) limit) with no prospectus update on record. A POS AM is likely required.`;
+      } else {
+        amendStatus = "info";
+        amendDetail = `No POS AM filed. ${latestProspectus ? `Most recent 424B prospectus filed ${daysSince(latestProspectus.date)} days ago (${latestProspectus.date}) satisfies the Section 10(a)(3) update requirement.` : `Registration has been effective for ${daysSinceEffective} days — within the 9-month window.`}`;
+      }
     } else {
+      const aDays = daysSince(latestPostEffective.date);
       amendStatus = "pass";
-      amendDetail = `Registration is ${regDays} days old — still within the 9-month Section 10(a)(3) window. No POS AM required yet.`;
+      amendDetail = `${postEffectiveAmendments.length} POS AM(s) filed. Most recent: ${latestPostEffective.form} on ${latestPostEffective.date} (${aDays} days ago).`;
     }
     checks.push({
       id: "amendments",
