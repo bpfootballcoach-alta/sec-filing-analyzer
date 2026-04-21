@@ -187,6 +187,17 @@ Deno.serve(async (req) => {
     // All filings AFTER the registration date
     const subsequentFilings = filings.filter(f => new Date(f.date) > regDate);
 
+    // Helper: check if a POS AM has been declared effective by the SEC.
+    // A POS AM requires its own EFFECT notice — merely filing it is not enough.
+    // We look for an EFFECT filing within 60 days AFTER the POS AM date.
+    const isPosAmEffective = (posAm) => {
+      const posDate = new Date(posAm.date);
+      return effectFilings.some(e => {
+        const eDate = new Date(e.date);
+        return eDate >= posDate && (eDate - posDate) <= 60 * 24 * 60 * 60 * 1000;
+      });
+    };
+
     // Pre-effective amendments (e.g. S-1/A, S-3/A)
     const baseForm = regType.split("/")[0]; // e.g. S-1 from S-1/A
     const amendments = subsequentFilings.filter(f =>
@@ -194,13 +205,19 @@ Deno.serve(async (req) => {
     );
     const latestAmendment = amendments[0] || null;
 
-    // Post-effective amendments — EDGAR form type is "POS AM" (not /A)
-    const postEffectiveAmendments = subsequentFilings.filter(f =>
+    // Post-effective amendments — EDGAR form type is "POS AM"
+    // CRITICAL: A POS AM must itself be declared effective by the SEC to reset the 9-month clock.
+    const allPostEffectiveAmendments = subsequentFilings.filter(f =>
       POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim())
     );
-    const latestPostEffective = postEffectiveAmendments[0] || null;
+    // Only count POS AMs that have their own EFFECT notice
+    const effectivePostEffectiveAmendments = allPostEffectiveAmendments.filter(isPosAmEffective);
+    const pendingPostEffectiveAmendments = allPostEffectiveAmendments.filter(f => !isPosAmEffective(f));
 
-    // 424B prospectuses filed after reg
+    const latestPostEffective = effectivePostEffectiveAmendments[0] || null;
+    const latestPendingPosAm = pendingPostEffectiveAmendments[0] || null;
+
+    // 424B prospectuses filed after reg (424Bs are effective upon filing — no EFFECT notice needed)
     const prospectuses = subsequentFilings.filter(f =>
       PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p))
     );
@@ -280,25 +297,33 @@ Deno.serve(async (req) => {
 
       const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
 
-      // Most recent update that resets the 9-month clock: POS AM, 424B prospectus, or pre-effective /A
-      const mostRecentUpdate = [latestAmendment, latestProspectus, latestPostEffective]
+      // Most recent EFFECTIVE update that resets the 9-month clock.
+      // NOTE: A POS AM only resets the clock if it has been declared effective by the SEC.
+      // A 424B prospectus is effective upon filing — no EFFECT notice needed.
+      // A pending (not-yet-effective) POS AM does NOT reset the clock.
+      const mostRecentEffectiveUpdate = [latestAmendment, latestProspectus, latestPostEffective]
         .filter(Boolean)
         .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
 
-      // The clock baseline: most recent update date, or effective date if no updates
-      const clockBaseDate = mostRecentUpdate ? new Date(mostRecentUpdate.date) : effectiveDate;
+      // The clock baseline: most recent effective update date, or the original effective date
+      const clockBaseDate = mostRecentEffectiveUpdate ? new Date(mostRecentEffectiveUpdate.date) : effectiveDate;
       const daysSinceClock = Math.floor((new Date() - clockBaseDate) / (1000 * 60 * 60 * 24));
+
+      // Build a note if there's a pending POS AM that hasn't been declared effective yet
+      const pendingNote = latestPendingPosAm
+        ? ` NOTE: A POS AM was filed on ${latestPendingPosAm.date} but has NOT yet been declared effective by the SEC — it does NOT reset the 9-month clock until the SEC issues an EFFECT notice.`
+        : "";
 
       if (daysSinceClock > SIXTEEN_MONTHS) {
         fsStatus = "fail";
-        fsDetail = `The prospectus (last updated: ${mostRecentUpdate?.form || selectedReg.form} on ${mostRecentUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — exceeding the 16-month Rule 3-12 financial statement age limit. Prospectus is STALE. A POS AM with updated financials is required immediately.`;
+        fsDetail = `The prospectus (last effective update: ${mostRecentEffectiveUpdate?.form || selectedReg.form} on ${mostRecentEffectiveUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — exceeding the 16-month Rule 3-12 financial statement age limit. Prospectus is STALE. A POS AM with updated financials must be declared effective immediately.${pendingNote}`;
       } else if (daysSinceClock > NINE_MONTHS) {
         fsStatus = "fail";
-        fsDetail = `The prospectus (last updated: ${mostRecentUpdate?.form || selectedReg.form} on ${mostRecentUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — past the 9-month Section 10(a)(3) limit. A prospectus may NOT be used after 9 months from its effective date without being updated. A POS AM with current financial statements must be filed.`;
+        fsDetail = `The prospectus (last effective update: ${mostRecentEffectiveUpdate?.form || selectedReg.form} on ${mostRecentEffectiveUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — past the 9-month Section 10(a)(3) limit. A prospectus may NOT be used after 9 months from its effective date without an updated, declared-effective prospectus.${pendingNote}`;
       } else {
         fsStatus = "pass";
-        fsDetail = mostRecentUpdate
-          ? `Most recent prospectus update (${mostRecentUpdate.form}, ${mostRecentUpdate.date}) is ${daysSinceClock} days old — within the 9-month Section 10(a)(3) window. Prospectus is current.`
+        fsDetail = mostRecentEffectiveUpdate
+          ? `Most recent effective prospectus update (${mostRecentEffectiveUpdate.form}, ${mostRecentEffectiveUpdate.date}) is ${daysSinceClock} days old — within the 9-month Section 10(a)(3) window. Prospectus is current.${pendingNote}`
           : `Registration effective ${daysSince(effectiveDate.toISOString().split("T")[0])} days ago — within the 9-month Section 10(a)(3) window. Prospectus is current.`;
       }
     }
@@ -401,35 +426,35 @@ Deno.serve(async (req) => {
     });
 
     // --- CHECK E: Post-Effective Amendments (POS AM) ---
+    // CRITICAL: A POS AM must be declared effective by the SEC (EFFECT notice) to count.
+    // A filed-but-not-yet-effective POS AM does NOT satisfy Section 10(a)(3).
     let amendStatus, amendDetail;
     if (isShelf) {
       amendStatus = "info";
-      amendDetail = "Shelf registrations (S-3/F-3) are kept current via annual report incorporation by reference — POS AM filings are not required for Section 10(a)(3) compliance, though they may be filed for other updates.";
-    } else if (postEffectiveAmendments.length === 0) {
-      // No POS AM on record — check if one is required based on time since effective date
-      const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
-      const daysSinceEffective = Math.floor((new Date() - effectiveDate) / (1000 * 60 * 60 * 24));
-      if (daysSinceEffective > NINE_MONTHS && !latestProspectus) {
-        amendStatus = "warn";
-        amendDetail = `No POS AM or 424B prospectus found. This registration has been effective for ${daysSinceEffective} days (past the 9-month Section 10(a)(3) limit) with no prospectus update on record. A POS AM is likely required.`;
-      } else {
-        amendStatus = "info";
-        amendDetail = `No POS AM filed. ${latestProspectus ? `Most recent 424B prospectus filed ${daysSince(latestProspectus.date)} days ago (${latestProspectus.date}) satisfies the Section 10(a)(3) update requirement.` : `Registration has been effective for ${daysSinceEffective} days — within the 9-month window.`}`;
-      }
+      amendDetail = "Shelf registrations (S-3/F-3) are kept current via annual report incorporation by reference — POS AM filings are not required for Section 10(a)(3) compliance.";
+    } else if (allPostEffectiveAmendments.length === 0) {
+      amendStatus = "info";
+      amendDetail = "No POS AM filings found for this registration statement.";
+    } else if (effectivePostEffectiveAmendments.length === 0) {
+      // POS AMs exist but NONE have been declared effective
+      amendStatus = "fail";
+      amendDetail = `${allPostEffectiveAmendments.length} POS AM(s) filed but NONE have been declared effective by the SEC (no EFFECT notice found). A filed POS AM does NOT satisfy Section 10(a)(3) until the SEC issues an effectiveness order. Most recent filed (not effective): ${latestPendingPosAm.form} on ${latestPendingPosAm.date}.`;
     } else {
       const aDays = daysSince(latestPostEffective.date);
+      const pendingNote = latestPendingPosAm ? ` Additionally, ${pendingPostEffectiveAmendments.length} POS AM(s) are filed but not yet declared effective.` : "";
       amendStatus = "pass";
-      amendDetail = `${postEffectiveAmendments.length} POS AM(s) filed. Most recent: ${latestPostEffective.form} on ${latestPostEffective.date} (${aDays} days ago).`;
+      amendDetail = `${effectivePostEffectiveAmendments.length} effective POS AM(s) on record. Most recent effective: ${latestPostEffective.form} on ${latestPostEffective.date} (${aDays} days ago).${pendingNote}`;
     }
     checks.push({
       id: "amendments",
       label: "Post-Effective Amendments (POS AM)",
       status: amendStatus,
       detail: amendDetail,
-      filingDate: latestPostEffective?.date || null,
-      filingUrl: edgarUrl(latestPostEffective),
-      filingForm: latestPostEffective?.form || null,
-      count: postEffectiveAmendments.length,
+      filingDate: latestPostEffective?.date || latestPendingPosAm?.date || null,
+      filingUrl: edgarUrl(latestPostEffective || latestPendingPosAm),
+      filingForm: latestPostEffective?.form || latestPendingPosAm?.form || null,
+      count: allPostEffectiveAmendments.length,
+      effectiveCount: effectivePostEffectiveAmendments.length,
     });
 
     const overallStatus =
