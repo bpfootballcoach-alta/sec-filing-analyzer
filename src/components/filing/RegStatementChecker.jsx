@@ -9,11 +9,19 @@ import {
   FileText, Info
 } from "lucide-react";
 
+// Status config for INDIVIDUAL checks — "pass" means this specific item checks out, NOT that the whole reg is current
 const STATUS_CONFIG = {
-  pass: { icon: ShieldCheck, color: "text-emerald-600", bg: "bg-emerald-50 border-emerald-200", badge: "bg-emerald-100 text-emerald-700", label: "Current" },
+  pass: { icon: ShieldCheck, color: "text-emerald-600", bg: "bg-emerald-50 border-emerald-200", badge: "bg-emerald-100 text-emerald-700", label: "OK" },
   warn: { icon: ShieldAlert, color: "text-amber-600", bg: "bg-amber-50 border-amber-200", badge: "bg-amber-100 text-amber-700", label: "Warning" },
-  fail: { icon: ShieldX, color: "text-red-600", bg: "bg-red-50 border-red-200", badge: "bg-red-100 text-red-700", label: "Stale / Deficient" },
+  fail: { icon: ShieldX, color: "text-red-600", bg: "bg-red-50 border-red-200", badge: "bg-red-100 text-red-700", label: "Deficient" },
   info: { icon: Info, color: "text-blue-600", bg: "bg-blue-50 border-blue-200", badge: "bg-blue-100 text-blue-700", label: "Info" },
+};
+
+// Overall verdict config — this is the only place "Current" / "Not Current" appears
+const VERDICT_CONFIG = {
+  pass: { icon: ShieldCheck, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-300", badge: "bg-emerald-600 text-white", label: "REGISTRATION IS CURRENT" },
+  warn: { icon: ShieldAlert, color: "text-amber-700", bg: "bg-amber-50 border-amber-300", badge: "bg-amber-500 text-white", label: "ISSUES REQUIRE REVIEW" },
+  fail: { icon: ShieldX, color: "text-red-700", bg: "bg-red-50 border-red-300", badge: "bg-red-600 text-white", label: "REGISTRATION IS NOT CURRENT" },
 };
 
 function CheckRow({ check }) {
@@ -111,7 +119,7 @@ export default function RegStatementChecker() {
     setSelectedReg(null);
   };
 
-  const overallCfg = detailResult ? STATUS_CONFIG[detailResult.overallStatus] || STATUS_CONFIG.info : null;
+  const overallCfg = detailResult ? (VERDICT_CONFIG[detailResult.overallStatus] || VERDICT_CONFIG.warn) : null;
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 space-y-5">
@@ -203,29 +211,41 @@ export default function RegStatementChecker() {
             <ArrowLeft className="w-4 h-4" /> Back to all statements
           </button>
 
-          {/* Overall status banner */}
-          <div className={`flex items-center justify-between px-4 py-3 rounded-lg border ${overallCfg.bg}`}>
-            <div className="flex items-center gap-3">
-              {React.createElement(overallCfg.icon, { className: `w-5 h-5 ${overallCfg.color}` })}
-              <div>
-                <p className="text-sm font-semibold text-foreground">
-                  {detailResult.registration.form} — {detailResult.registration.date}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {detailResult.companyName} · {detailResult.ticker} · {detailResult.registration.daysOld} days old · {detailResult.registration.isShelf ? "Shelf Registration" : "Non-Shelf Registration"}
-                </p>
+          {/* Overall verdict banner — the ONLY place "current" / "not current" appears */}
+          <div className={`rounded-xl border-2 p-5 ${overallCfg.bg}`}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                {React.createElement(overallCfg.icon, { className: `w-7 h-7 flex-shrink-0 ${overallCfg.color}` })}
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className={`text-sm font-bold px-3 py-1 border-0 ${overallCfg.badge}`}>{overallCfg.label}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {detailResult.registration.form} filed {detailResult.registration.date} · {detailResult.companyName} ({detailResult.ticker}) · {detailResult.registration.isShelf ? "Shelf" : "Non-Shelf"}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge className={`border-0 ${overallCfg.badge}`}>{overallCfg.label}</Badge>
               {detailResult.registration.url && (
-                <a href={detailResult.registration.url} target="_blank" rel="noopener noreferrer">
+                <a href={detailResult.registration.url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
                   <Button variant="outline" size="sm" className="gap-1 h-7 text-xs">
                     EDGAR <ExternalLink className="w-3 h-3" />
                   </Button>
                 </a>
               )}
             </div>
+
+            {/* AI-generated plain-English summary */}
+            {detailResult.aiSummary && (
+              <div className="mt-4 pt-4 border-t border-border/40 space-y-2">
+                <p className="text-sm font-medium text-foreground leading-relaxed">{detailResult.aiSummary.summary}</p>
+                {detailResult.aiSummary.key_issue && (
+                  <p className="text-xs text-muted-foreground"><span className="font-semibold">Key Issue:</span> {detailResult.aiSummary.key_issue}</p>
+                )}
+                {detailResult.aiSummary.required_action && (
+                  <p className="text-xs text-muted-foreground"><span className="font-semibold">Required Action:</span> {detailResult.aiSummary.required_action}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Individual checks */}

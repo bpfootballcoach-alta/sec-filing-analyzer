@@ -461,6 +461,31 @@ Deno.serve(async (req) => {
       checks.some(c => c.status === "fail") ? "fail" :
       checks.some(c => c.status === "warn") ? "warn" : "pass";
 
+    // AI plain-English verdict: look at ALL checks holistically and deliver a definitive answer
+    const checkSummary = checks.map(c => `[${c.status.toUpperCase()}] ${c.label}: ${c.detail}`).join("\n");
+
+    const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt: `You are a securities law compliance expert. A user wants to know: "Can this registration statement currently be used for offers and sales of securities?"
+
+Company: ${companyName} (${ticker.toUpperCase()})
+Form: ${selectedReg.form} filed ${selectedReg.date}
+Type: ${isShelf ? "Shelf (S-3/F-3)" : "Non-Shelf (S-1/F-1)"}
+
+Individual compliance checks:
+${checkSummary}
+
+Give a direct, plain-English answer in 2-3 sentences. State clearly YES or NO whether the registration is currently usable. Identify the single most critical issue. State what action is needed, if any. Do not hedge if the answer is clear from the checks above.`,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          verdict: { type: "string", enum: ["CURRENT", "NOT CURRENT", "UNCERTAIN"] },
+          summary: { type: "string" },
+          key_issue: { type: "string" },
+          required_action: { type: "string" }
+        }
+      }
+    });
+
     return Response.json({
       mode: "detail",
       ticker: ticker.toUpperCase(),
@@ -475,6 +500,7 @@ Deno.serve(async (req) => {
         isShelf,
       },
       overallStatus,
+      aiSummary: aiSummary || null,
       checks,
       checkedAt: new Date().toISOString(),
     });
