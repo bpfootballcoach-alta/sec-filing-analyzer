@@ -8,9 +8,17 @@ const daysSince = (dateStr) => {
   return Math.floor((new Date() - new Date(dateStr)) / (1000 * 60 * 60 * 24));
 };
 
-const REG_FORMS = ["S-1", "S-3", "F-1", "F-3", "S-11", "S-1/A", "S-3/A", "F-1/A", "F-3/A"];
-const AMENDMENT_FORMS = ["S-1/A", "S-3/A", "F-1/A", "F-3/A"];
+const REG_FORMS = ["S-1", "S-3", "F-1", "F-3", "S-11", "S-4", "S-8"];
+const AMENDMENT_FORMS = ["S-1/A", "S-3/A", "F-1/A", "F-3/A", "S-4/A", "S-11/A"];
 const PROSPECTUS_FORMS = ["424B1", "424B2", "424B3", "424B4", "424B5", "424B7", "424B8", "PROSPECTUS"];
+
+// Check if a form string is a registration statement (base or amendment)
+const isRegForm = (form) => {
+  if (!form) return false;
+  const f = form.toUpperCase().trim();
+  // Match base forms and their /A amendments
+  return REG_FORMS.some(r => f === r || f === r + "/A" || f.startsWith(r + "/"));
+};
 
 Deno.serve(async (req) => {
   try {
@@ -37,36 +45,40 @@ Deno.serve(async (req) => {
     }
     if (!cik) return Response.json({ error: `Could not find CIK for ticker: ${ticker}` }, { status: 404 });
 
-    // Step 2: Fetch all filings
+    // Step 2: Fetch ALL filings — recent page + all historical pagination files
     const subRes = await fetch(`${EDGAR_BASE}/CIK${cik}.json`, { headers: HEADERS });
     if (!subRes.ok) return Response.json({ error: "Failed to fetch EDGAR submissions" }, { status: 500 });
     const subData = await subRes.json();
 
-    let allForms = [], allDates = [], allAccessions = [], allPrimaryDocs = [];
-    const recent = subData.filings?.recent || {};
-    allForms = recent.form || [];
-    allDates = recent.filingDate || [];
-    allAccessions = recent.accessionNumber || [];
-    allPrimaryDocs = recent.primaryDocument || [];
+    const mergeFilingPage = (acc, page) => {
+      const forms = page.form || [];
+      const dates = page.filingDate || [];
+      const accessions = page.accessionNumber || [];
+      const docs = page.primaryDocument || [];
+      for (let i = 0; i < forms.length; i++) {
+        if (forms[i] && dates[i]) {
+          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i] });
+        }
+      }
+      return acc;
+    };
 
-    // Fetch additional pages if any
-    for (const f of (subData.filings?.files || [])) {
-      const pageRes = await fetch(`https://data.sec.gov${f.name}`, { headers: HEADERS });
-      if (pageRes.ok) {
-        const p = await pageRes.json();
-        allForms = allForms.concat(p.form || []);
-        allDates = allDates.concat(p.filingDate || []);
-        allAccessions = allAccessions.concat(p.accessionNumber || []);
-        allPrimaryDocs = allPrimaryDocs.concat(p.primaryDocument || []);
+    let filings = [];
+    mergeFilingPage(filings, subData.filings?.recent || {});
+
+    // Fetch ALL additional historical pages in parallel
+    const additionalFiles = subData.filings?.files || [];
+    if (additionalFiles.length > 0) {
+      const pageResponses = await Promise.all(
+        additionalFiles.map(f => fetch(`https://data.sec.gov${f.name}`, { headers: HEADERS }))
+      );
+      for (const pageRes of pageResponses) {
+        if (pageRes.ok) {
+          const p = await pageRes.json();
+          mergeFilingPage(filings, p);
+        }
       }
     }
-
-    const filings = allForms.map((form, i) => ({
-      form,
-      date: allDates[i],
-      accession: allAccessions[i],
-      doc: allPrimaryDocs[i],
-    })).filter(f => f.form && f.date);
 
     const edgarUrl = (f) => f
       ? `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${f.accession.replace(/-/g, "")}/${f.doc}`
@@ -77,9 +89,11 @@ Deno.serve(async (req) => {
       : null;
 
     // Step 3: If no accession selected, return list of all registration statements
-    const regFilings = filings.filter(f =>
-      REG_FORMS.some(r => f.form?.toUpperCase() === r || f.form?.toUpperCase().startsWith(r + "/"))
-    );
+    // Only show BASE forms (not /A amendments) in the list — user picks the original filing
+    const regFilings = filings.filter(f => {
+      const form = f.form?.toUpperCase().trim();
+      return REG_FORMS.some(r => form === r);
+    });
 
     if (!accession) {
       // Return list of registration statements for user to pick from
