@@ -298,14 +298,21 @@ Deno.serve(async (req) => {
       const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
 
       // Most recent EFFECTIVE update that resets the 9-month clock.
-      // NOTE: A POS AM only resets the clock if it has been declared effective by the SEC.
-      // A 424B prospectus is effective upon filing — no EFFECT notice needed.
-      // A pending (not-yet-effective) POS AM does NOT reset the clock.
-      const mostRecentEffectiveUpdate = [latestAmendment, latestProspectus, latestPostEffective]
+      // CRITICAL RULES:
+      // 1. A POS AM ONLY resets the clock if it has been declared effective by the SEC (EFFECT notice).
+      //    A filed-but-not-yet-effective POS AM does NOT reset the clock.
+      // 2. A 424B prospectus IS effective upon filing — no EFFECT notice needed.
+      // 3. A pre-effective amendment (S-1/A, F-1/A) does NOT reset the 9-month clock — it is
+      //    a pre-effectiveness amendment, not a post-effective prospectus update.
+      //    Only POS AM (declared effective) or 424B resets the clock.
+      const mostRecentEffectiveUpdate = [latestProspectus, latestPostEffective]
         .filter(Boolean)
         .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
 
       // The clock baseline: most recent effective update date, or the original effective date
+      // If there is NO effective update at all, the clock runs from the original registration's
+      // effective date (effectiveDate). If effectiveDate equals regDate (no EFFECT notice found),
+      // we conservatively use the registration filing date as the clock start.
       const clockBaseDate = mostRecentEffectiveUpdate ? new Date(mostRecentEffectiveUpdate.date) : effectiveDate;
       const daysSinceClock = Math.floor((new Date() - clockBaseDate) / (1000 * 60 * 60 * 24));
 
@@ -314,17 +321,22 @@ Deno.serve(async (req) => {
         ? ` NOTE: A POS AM was filed on ${latestPendingPosAm.date} but has NOT yet been declared effective by the SEC — it does NOT reset the 9-month clock until the SEC issues an EFFECT notice.`
         : "";
 
+      // Clock explanation string for use in detail messages
+      const clockExplanation = mostRecentEffectiveUpdate
+        ? `The 9-month clock is running from the most recent declared-effective update: ${mostRecentEffectiveUpdate.form} on ${mostRecentEffectiveUpdate.date} (${daysSinceClock} days ago).`
+        : `The 9-month clock is running from the original registration effective date: ${clockBaseDate.toISOString().split("T")[0]} (${daysSinceClock} days ago). No subsequent effective prospectus update (declared-effective POS AM or 424B) has been found.`;
+
       if (daysSinceClock > SIXTEEN_MONTHS) {
         fsStatus = "fail";
-        fsDetail = `The prospectus (last effective update: ${mostRecentEffectiveUpdate?.form || selectedReg.form} on ${mostRecentEffectiveUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — exceeding the 16-month Rule 3-12 financial statement age limit. Prospectus is STALE. A POS AM with updated financials must be declared effective immediately.${pendingNote}`;
+        fsDetail = `STALE — RULE 3-12 VIOLATION: ${clockExplanation} This exceeds the 16-month Rule 3-12 financial statement age limit. The prospectus CANNOT be used. A new POS AM with updated audited financials must be filed and declared effective immediately.${pendingNote}`;
       } else if (daysSinceClock > NINE_MONTHS) {
         fsStatus = "fail";
-        fsDetail = `The prospectus (last effective update: ${mostRecentEffectiveUpdate?.form || selectedReg.form} on ${mostRecentEffectiveUpdate?.date || selectedReg.date}) is ${daysSinceClock} days old — past the 9-month Section 10(a)(3) limit. A prospectus may NOT be used after 9 months from its effective date without an updated, declared-effective prospectus.${pendingNote}`;
+        fsDetail = `STALE — SECTION 10(a)(3) VIOLATION: ${clockExplanation} This exceeds the 9-month limit under Section 10(a)(3). The prospectus CANNOT be used for offers or sales until a new prospectus update (POS AM declared effective, or new 424B) resets the clock. A pre-effective /A amendment does NOT satisfy this requirement — only a declared-effective POS AM or 424B counts.${pendingNote}`;
       } else {
         fsStatus = "pass";
         fsDetail = mostRecentEffectiveUpdate
-          ? `Most recent effective prospectus update (${mostRecentEffectiveUpdate.form}, ${mostRecentEffectiveUpdate.date}) is ${daysSinceClock} days old — within the 9-month Section 10(a)(3) window. Prospectus is current.${pendingNote}`
-          : `Registration effective ${daysSince(effectiveDate.toISOString().split("T")[0])} days ago — within the 9-month Section 10(a)(3) window. Prospectus is current.`;
+          ? `Within 9-month window: ${clockExplanation}${pendingNote}`
+          : `Within 9-month window: ${clockExplanation}`;
       }
     }
 
