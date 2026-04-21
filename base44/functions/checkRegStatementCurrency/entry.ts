@@ -10,6 +10,7 @@ const daysSince = (dateStr) => {
 
 const REG_FORMS = ["S-1", "S-3", "F-1", "F-3", "S-11", "S-4", "S-8"];
 const AMENDMENT_FORMS = ["S-1/A", "S-3/A", "F-1/A", "F-3/A", "S-4/A", "S-11/A"];
+const POST_EFFECTIVE_FORMS = ["POS AM", "POS AM/A"];
 const PROSPECTUS_FORMS = ["424B1", "424B2", "424B3", "424B4", "424B5", "424B7", "424B8", "PROSPECTUS"];
 
 // Check if a form string is a registration statement (base or amendment)
@@ -126,12 +127,18 @@ Deno.serve(async (req) => {
     // All filings AFTER the registration date
     const subsequentFilings = filings.filter(f => new Date(f.date) > regDate);
 
-    // Amendments to this specific reg statement
+    // Pre-effective amendments (e.g. S-1/A, S-3/A)
     const baseForm = regType.split("/")[0]; // e.g. S-1 from S-1/A
     const amendments = subsequentFilings.filter(f =>
       f.form?.toUpperCase().startsWith(baseForm + "/A")
     );
     const latestAmendment = amendments[0] || null;
+
+    // Post-effective amendments — EDGAR form type is "POS AM" (not /A)
+    const postEffectiveAmendments = subsequentFilings.filter(f =>
+      POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim())
+    );
+    const latestPostEffective = postEffectiveAmendments[0] || null;
 
     // 424B prospectuses filed after reg
     const prospectuses = subsequentFilings.filter(f =>
@@ -181,8 +188,8 @@ Deno.serve(async (req) => {
       const nineMonths = 274;
       const sixteenMonths = 487;
 
-      // Find the most recent update — either a 424B or an amendment
-      const mostRecentUpdate = [latestAmendment, latestProspectus]
+      // Find the most recent update — 424B, pre-effective amendment, or POS AM
+      const mostRecentUpdate = [latestAmendment, latestProspectus, latestPostEffective]
         .filter(Boolean)
         .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
 
@@ -299,31 +306,31 @@ Deno.serve(async (req) => {
       count: currentReports.length,
     });
 
-    // --- CHECK E: Post-Effective Amendments ---
+    // --- CHECK E: Post-Effective Amendments (POS AM) ---
     let amendStatus, amendDetail;
     if (isShelf) {
       amendStatus = "info";
-      amendDetail = "Shelf registrations (S-3/F-3) are kept current via annual report incorporation by reference — post-effective amendments are not required annually, though they may be filed for other updates.";
-    } else if (amendments.length === 0 && regDays > 274) {
+      amendDetail = "Shelf registrations (S-3/F-3) are kept current via annual report incorporation by reference — post-effective amendments (POS AM) are not required annually, though they may be filed for other updates.";
+    } else if (postEffectiveAmendments.length === 0 && regDays > 274) {
       amendStatus = "warn";
-      amendDetail = `No post-effective amendments (${baseForm}/A) found after this registration statement, which is now ${regDays} days old. For ongoing offerings past 9 months, a post-effective amendment with updated financial statements is generally required.`;
-    } else if (amendments.length > 0) {
-      const aDays = daysSince(latestAmendment.date);
+      amendDetail = `No post-effective amendments (POS AM) found after this registration statement, which is now ${regDays} days old. For ongoing offerings past 9 months, a POS AM with updated financial statements is generally required under Section 10(a)(3).`;
+    } else if (postEffectiveAmendments.length > 0) {
+      const aDays = daysSince(latestPostEffective.date);
       amendStatus = aDays <= 274 ? "pass" : "warn";
-      amendDetail = `${amendments.length} amendment(s) filed. Most recent: ${latestAmendment.form} on ${latestAmendment.date} (${aDays} days ago).`;
+      amendDetail = `${postEffectiveAmendments.length} post-effective amendment(s) (POS AM) filed. Most recent: ${latestPostEffective.form} on ${latestPostEffective.date} (${aDays} days ago).`;
     } else {
       amendStatus = "pass";
-      amendDetail = `Registration is ${regDays} days old — still within the 9-month Section 10(a)(3) window. No amendment required yet.`;
+      amendDetail = `Registration is ${regDays} days old — still within the 9-month Section 10(a)(3) window. No POS AM required yet.`;
     }
     checks.push({
       id: "amendments",
-      label: `Post-Effective Amendments (${baseForm}/A)`,
+      label: "Post-Effective Amendments (POS AM)",
       status: amendStatus,
       detail: amendDetail,
-      filingDate: latestAmendment?.date || null,
-      filingUrl: edgarUrl(latestAmendment),
-      filingForm: latestAmendment?.form || null,
-      count: amendments.length,
+      filingDate: latestPostEffective?.date || null,
+      filingUrl: edgarUrl(latestPostEffective),
+      filingForm: latestPostEffective?.form || null,
+      count: postEffectiveAmendments.length,
     });
 
     const overallStatus =
