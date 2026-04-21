@@ -29,8 +29,9 @@ Deno.serve(async (req) => {
     }
 
     // Upload the content as a file so the LLM can analyze it via file_urls
-    const mimeType = contentType.includes("html") ? "text/html" : "text/plain";
-    const fileName = url.split("/").pop().split("?")[0] || "filing.htm";
+    // Always use .html extension — .htm is not a supported file type for LLM analysis
+    const mimeType = "text/html";
+    const fileName = "filing.html";
     const file = new File([text], fileName, { type: mimeType });
     const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
 
