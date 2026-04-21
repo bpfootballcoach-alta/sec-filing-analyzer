@@ -90,7 +90,61 @@ Deno.serve(async (req) => {
       : null;
 
     // Step 3: If no accession selected, return list of all registration statements
-    // Only show BASE forms (not /A amendments) in the list — user picks the original filing
+    // Only show BASE forms that have been declared effective (EDGAR files an "EFFECT" notice)
+    // S-8 and S-4 (for mergers) are automatically effective upon filing — no EFFECT notice needed
+    const AUTO_EFFECTIVE_FORMS = ["S-8"];
+
+    // Collect all accessions that have an associated EFFECT filing
+    const effectNotices = new Set(
+      filings
+        .filter(f => f.form?.toUpperCase().trim() === "EFFECT")
+        .map(f => {
+          // EDGAR EFFECT filings reference the original registration accession in their accession number prefix
+          // But the most reliable way: EFFECT filings appear in the same sequence; we cross-reference by date proximity
+          // Actually EDGAR EFFECT notices carry the same accession number prefix as the reg statement they relate to
+          return f.accession;
+        })
+    );
+
+    // Simpler and more reliable: fetch the filing index for each reg statement to check for EFFECT
+    // Too expensive to do for the list view. Instead, flag effectiveness status based on:
+    // 1. Auto-effective forms (S-8)
+    // 2. Whether a 424B or POS AM has been filed after (strong proxy for effectiveness)
+    // 3. Whether an EFFECT form appears in the filing history around the same time
+
+    const effectFilings = filings.filter(f => f.form?.toUpperCase().trim() === "EFFECT");
+
+    const isLikelyEffective = (regFiling) => {
+      const form = regFiling.form?.toUpperCase().trim();
+      // S-8 is automatically effective upon filing
+      if (AUTO_EFFECTIVE_FORMS.includes(form)) return { effective: true, reason: "Auto-effective upon filing" };
+
+      const regDate = new Date(regFiling.date);
+
+      // Check if an EFFECT notice was filed within 365 days after this reg statement
+      const effectAfter = effectFilings.find(e => {
+        const eDate = new Date(e.date);
+        return eDate >= regDate && (eDate - regDate) < 365 * 24 * 60 * 60 * 1000;
+      });
+      if (effectAfter) return { effective: true, reason: `EFFECT notice filed ${effectAfter.date}`, effectDate: effectAfter.date };
+
+      // Check if a 424B prospectus was filed after (strong proxy — only filed after effectiveness)
+      const prospectusAfter = filings.find(f => {
+        const fDate = new Date(f.date);
+        return fDate > regDate && PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p));
+      });
+      if (prospectusAfter) return { effective: true, reason: `424B prospectus filed ${prospectusAfter.date} (proxy for effectiveness)`, effectDate: prospectusAfter.date };
+
+      // Check if a POS AM was filed after (only filed post-effectiveness)
+      const posAmAfter = filings.find(f => {
+        const fDate = new Date(f.date);
+        return fDate > regDate && POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim());
+      });
+      if (posAmAfter) return { effective: true, reason: `POS AM filed ${posAmAfter.date} (proxy for effectiveness)`, effectDate: posAmAfter.date };
+
+      return { effective: false, reason: "No EFFECT notice, 424B, or POS AM found — registration may not have been declared effective" };
+    };
+
     const regFilings = filings.filter(f => {
       const form = f.form?.toUpperCase().trim();
       return REG_FORMS.some(r => form === r);
@@ -103,14 +157,20 @@ Deno.serve(async (req) => {
         ticker: ticker.toUpperCase(),
         cik,
         companyName,
-        registrationStatements: regFilings.map(f => ({
-          form: f.form,
-          date: f.date,
-          accession: f.accession,
-          doc: f.doc,
-          url: edgarUrl(f),
-          daysOld: daysSince(f.date),
-        })),
+        registrationStatements: regFilings.map(f => {
+          const effectiveness = isLikelyEffective(f);
+          return {
+            form: f.form,
+            date: f.date,
+            accession: f.accession,
+            doc: f.doc,
+            url: edgarUrl(f),
+            daysOld: daysSince(f.date),
+            effective: effectiveness.effective,
+            effectiveReason: effectiveness.reason,
+            effectDate: effectiveness.effectDate || null,
+          };
+        }),
       });
     }
 
@@ -163,6 +223,20 @@ Deno.serve(async (req) => {
     const latestCurrent = currentReports[0] || null;
 
     const checks = [];
+
+    // --- CHECK 0: Was this registration statement declared effective? ---
+    const effectiveness = isLikelyEffective(selectedReg);
+    checks.push({
+      id: "effectiveness",
+      label: "Registration Statement Declared Effective",
+      status: effectiveness.effective ? "pass" : "fail",
+      detail: effectiveness.effective
+        ? `This registration statement appears to have been declared effective. Reason: ${effectiveness.reason}.`
+        : `This registration statement does NOT appear to have been declared effective. ${effectiveness.reason}. An uneffective registration statement cannot be used for offers or sales of securities.`,
+      filingDate: effectiveness.effectDate || null,
+      filingUrl: null,
+      filingForm: null,
+    });
 
     // --- CHECK A: Financial Statement Currency (Rule 3-12) ---
     // Financial statements in a registration statement must not be more than 135 days old

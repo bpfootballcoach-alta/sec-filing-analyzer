@@ -166,8 +166,14 @@ export default function RegStatementChecker() {
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary" className="text-xs">{reg.form}</Badge>
                       <span className="text-sm font-medium text-foreground">{reg.date}</span>
+                      {reg.effective === false && (
+                        <Badge className="text-xs border-0 bg-red-100 text-red-700">Not Effective</Badge>
+                      )}
+                      {reg.effective === true && (
+                        <Badge className="text-xs border-0 bg-emerald-100 text-emerald-700">Effective</Badge>
+                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{reg.daysOld} days ago</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{reg.daysOld} days ago{reg.effectDate ? ` · Effective ${reg.effectDate}` : ""}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
