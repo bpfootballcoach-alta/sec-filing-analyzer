@@ -8,13 +8,8 @@ import FileUploader from "@/components/filing/FileUploader";
 import AnalysisCard from "@/components/filing/AnalysisCard";
 import { useNavigate } from "react-router-dom";
 import {
-  DETECTION_SCHEMA,
   EXTRACTION_SCHEMA,
-  buildDetectionPrompt,
   buildExtractionPrompt,
-  buildDetectionPromptJson,
-  buildExtractionPromptJson,
-  parseJsonFromText,
 } from "@/lib/filingAnalysis";
 
 export default function Dashboard() {
@@ -68,67 +63,23 @@ export default function Dashboard() {
       // PDFs → file_urls + response_json_schema (gemini_3_flash)
       // HTML URLs → add_context_from_internet (gemini_3_1_pro) but gemini does NOT support
       // response_json_schema with search. So for URLs we ask for JSON in the prompt and parse it.
-      const isPdf = file_url.toLowerCase().endsWith(".pdf");
-
-      let detectionResult, extractionResult;
-
-      if (isPdf) {
-        // PDF path: structured JSON schema supported
-        detectionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildDetectionPrompt(file_url, false),
-          response_json_schema: DETECTION_SCHEMA,
-          model: "gemini_3_flash",
-          file_urls: [file_url],
-        });
-
-        const filingType = detectionResult.filing_type || "Unknown";
-        await base44.entities.FilingAnalysis.update(record.id, {
-          company_name: detectionResult.company_name,
-          ticker: detectionResult.ticker,
-          filing_type: filingType,
-          filing_date: detectionResult.filing_date,
-          period_covered: detectionResult.period_covered,
-        });
-
-        extractionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildExtractionPrompt(file_url, false, filingType),
-          response_json_schema: EXTRACTION_SCHEMA,
-          model: "gemini_3_flash",
-          file_urls: [file_url],
-        });
-      } else {
-        // URL path: fetch the filing server-side, upload it, then analyze like a PDF
+      // Resolve the file URL — for non-PDF URLs, fetch and re-upload as .html first
+      let analysisUrl = file_url;
+      if (!file_url.toLowerCase().endsWith(".pdf")) {
         const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
-        const uploadedUrl = fetchRes.data?.file_url;
-
-        if (!uploadedUrl) {
+        analysisUrl = fetchRes.data?.file_url;
+        if (!analysisUrl) {
           throw new Error(fetchRes.data?.error || "Failed to fetch the filing from the provided URL");
         }
-
-        // Now treat the uploaded file like a PDF — structured JSON schema works fine
-        detectionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildDetectionPrompt(uploadedUrl, false),
-          response_json_schema: DETECTION_SCHEMA,
-          model: "gemini_3_flash",
-          file_urls: [uploadedUrl],
-        });
-
-        const filingType = detectionResult.filing_type || "Unknown";
-        await base44.entities.FilingAnalysis.update(record.id, {
-          company_name: detectionResult.company_name || null,
-          ticker: detectionResult.ticker || null,
-          filing_type: filingType,
-          filing_date: detectionResult.filing_date || null,
-          period_covered: detectionResult.period_covered || null,
-        });
-
-        extractionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildExtractionPrompt(uploadedUrl, false, filingType),
-          response_json_schema: EXTRACTION_SCHEMA,
-          model: "gemini_3_flash",
-          file_urls: [uploadedUrl],
-        });
       }
+
+      // Single LLM call — extract everything at once (detection fields are part of EXTRACTION_SCHEMA)
+      const extractionResult = await base44.integrations.Core.InvokeLLM({
+        prompt: buildExtractionPrompt(analysisUrl, false, null),
+        response_json_schema: EXTRACTION_SCHEMA,
+        model: "gemini_3_flash",
+        file_urls: [analysisUrl],
+      });
 
       await base44.entities.FilingAnalysis.update(record.id, {
         ...extractionResult,
