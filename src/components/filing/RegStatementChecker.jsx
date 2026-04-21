@@ -70,6 +70,13 @@ export default function RegStatementChecker() {
   const handleTickerSearch = async () => {
     const t = ticker.trim().toUpperCase();
     if (!t) return;
+
+    // Validate it looks like a ticker (1–6 uppercase letters/numbers, optional dot)
+    if (t.length > 10 || t.includes("/") || t.includes("\\") || t.startsWith("HTTP")) {
+      setError("Please enter a ticker symbol (e.g. AAPL, MSFT) — not a URL.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     setRegList(null);
@@ -125,7 +132,7 @@ export default function RegStatementChecker() {
           <Input
             placeholder="Enter ticker symbol (e.g. ANNA, AAPL)"
             value={ticker}
-            onChange={e => { setTicker(e.target.value.toUpperCase()); setError(""); }}
+            onChange={e => { setTicker(e.target.value.toUpperCase().replace(/\s/g, "")); setError(""); }}
             onKeyDown={e => e.key === "Enter" && handleTickerSearch()}
             className="pl-9 uppercase"
           />
