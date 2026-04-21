@@ -19,6 +19,7 @@ import {
   Trash2,
   MessageSquare,
   Download,
+  ShieldCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import RevenueBreakdown from "@/components/filing/RevenueBreakdown";
 import RiskFactorsList from "@/components/filing/RiskFactorsList";
 import FinancingDetails from "@/components/filing/FinancingDetails";
 import NarrativeHighlights from "@/components/filing/NarrativeHighlights";
+import RegistrationCurrencyCheck from "@/components/filing/RegistrationCurrencyCheck";
 
 export default function AnalysisDetail() {
   const pathParts = window.location.pathname.split("/");
@@ -337,9 +339,14 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
           </SectionCard>
         )}
 
+        {/* Registration Currency Check */}
+        <SectionCard title="Registration Statement Currency" icon={ShieldCheck} delay={0.48}>
+          <RegistrationCurrencyCheck ticker={analysis.ticker} />
+        </SectionCard>
+
         {/* Risk Factors */}
         {analysis.risk_factors && analysis.risk_factors.length > 0 && (
-          <SectionCard title="Risk Factors" icon={AlertTriangle} delay={0.45}>
+          <SectionCard title="Risk Factors" icon={AlertTriangle} delay={0.5}>
             <RiskFactorsList risks={analysis.risk_factors} />
           </SectionCard>
         )}
