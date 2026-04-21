@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 import FileUploader from "@/components/filing/FileUploader";
 import AnalysisCard from "@/components/filing/AnalysisCard";
+import RegStatementChecker from "@/components/filing/RegStatementChecker";
 import { useNavigate } from "react-router-dom";
 import {
   EXTRACTION_SCHEMA,
@@ -143,6 +144,15 @@ export default function Dashboard() {
             onUrlSubmitted={(url) => analyzeMutation.mutate({ url })}
             isProcessing={isProcessing}
           />
+        </motion.section>
+
+        {/* Registration Statement Currency Checker */}
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <RegStatementChecker />
         </motion.section>
 
         {/* Previous Analyses */}
