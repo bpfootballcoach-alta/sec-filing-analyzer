@@ -579,8 +579,17 @@ Deno.serve(async (req) => {
         : [];
 
       if (!annualDateForQ) {
-        quarterlyStatus = "info";
-        quarterlyDetail = "No 10-K filed after this registration — cannot assess 10-Q currency without an annual baseline.";
+        // No 10-K after the registration, but check if 10-Qs have been filed and not incorporated
+        if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0) {
+          quarterlyStatus = "warn";
+          quarterlyDetail = `PROSPECTUS INCORPORATION GAP: ${quarterlies.length} 10-Q(s) have been filed with the SEC (most recent: ${quarterlies[0].form} ${quarterlies[0].date}), but ${unincorporatedQuarterlies.length} filed after the last prospectus update (${mostRecentEffectiveUpdate?.date || effectiveDate.toISOString().split("T")[0]}) are NOT part of the live prospectus. A 10-Q filed with the SEC does NOT update a non-shelf prospectus — a 424B3 supplement or declared-effective POS AM is required. Note: No post-registration 10-K found to establish a baseline for expected quarterly count.`;
+        } else if (quarterlies.length > 0) {
+          quarterlyStatus = "pass";
+          quarterlyDetail = `${quarterlies.length} 10-Q(s) filed (most recent: ${quarterlies[0].form} ${quarterlies[0].date}). All are incorporated in the live prospectus. No post-registration 10-K on record.`;
+        } else {
+          quarterlyStatus = "info";
+          quarterlyDetail = "No 10-K or 10-Q filed after this registration — cannot assess quarterly currency without a fiscal year baseline.";
+        }
       } else if (expectedQ === 0) {
         quarterlyStatus = "pass";
         quarterlyDetail = `10-K filed ${annualDaysForQ} days ago — no quarterly report is yet due. No quarterly incorporation gap.`;
