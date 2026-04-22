@@ -169,7 +169,8 @@ Deno.serve(async (req) => {
 
     const regFilings = filings.filter(f => {
       const form = f.form?.toUpperCase().trim();
-      return REG_FORMS.some(r => form === r);
+      // Include base forms AND their /A amendments
+      return REG_FORMS.some(r => form === r || form === r + "/A" || form.startsWith(r + "/"));
     });
 
     // Helper: fetch registration number (e.g. 333-280366) from the filing index
