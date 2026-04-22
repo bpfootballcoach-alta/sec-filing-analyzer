@@ -255,118 +255,230 @@ Deno.serve(async (req) => {
       filingForm: null,
     });
 
-    // --- CHECK A: Section 10(a)(3) Prospectus Currency ---
+    // =============================================================================
+    // SECTION 10(a)(3) / RULE 427 CURRENCY FRAMEWORK
+    // =============================================================================
     //
-    // Section 10(a)(3): A prospectus included in a registration statement CANNOT be used
-    // after 9 months from its effective date unless it has been updated.
-    // Rule 3-12: Financial statements in the prospectus cannot be older than 16 months.
+    // The correct two-step framework (per ANNA analysis):
     //
-    // For S-3/F-3 (shelf): automatically kept current via IBR of annual/quarterly reports.
-    //   Stale if: most recent 10-K is > 16 months old, OR company is not a current filer.
+    // STEP 1 — 9-MONTH TEST (prospectus staleness):
+    //   A prospectus cannot be used more than 9 months after its effective date
+    //   UNLESS it has been updated via a valid mechanism.
+    //   Valid update mechanisms:
+    //     (a) A new 424B3 (or other 424B) prospectus supplement — effective upon filing.
+    //     (b) A POS AM declared effective by the SEC (EFFECT notice required).
+    //   NOT valid:
+    //     - A filed-but-not-yet-effective POS AM. Filing alone does NOT restart the clock.
+    //     - A pre-effective /A amendment (S-1/A). This is pre-effectiveness.
+    //     - A 10-Q or 10-K filed with the SEC but NOT expressly made part of the live
+    //       prospectus via a 424B supplement or declared-effective POS AM.
     //
-    // For S-1/F-1 (non-shelf): prospectus stale after 9 months from effective date
-    //   UNLESS a POS AM, new 424B, or /A amendment has been filed that restarts the clock.
-    //   The clock runs from the effective date of the most recent update (POS AM/424B),
-    //   not from the original filing date.
-    //   Additionally, financial statements in the prospectus cannot be > 16 months old (Rule 3-12).
+    //   If a valid 424B3 supplement incorporating interim (quarterly) financials was filed,
+    //   it satisfies the 9-month test for that interim period — BUT does NOT extend the
+    //   16-month outer limit on the audited annual financials.
+    //
+    // STEP 2 — 16-MONTH ANNUAL STALENESS TEST (Rule 3-12 outer limit):
+    //   Regardless of the 9-month test, the audited annual financials contained in (or
+    //   incorporated into) the LIVE prospectus cannot be older than 16 months.
+    //   The question is: what is the date of the most recent AUDITED annual financials
+    //   that are actually part of the live prospectus?
+    //
+    //   "Part of the live prospectus" means contained in:
+    //     - The original registration statement (if still within 9 months), OR
+    //     - The most recent declared-effective POS AM, OR
+    //     - The most recent 424B3 supplement that expressly incorporated annual financials, OR
+    //     - For S-3: automatically via IBR of the most recent 10-K (if company is current filer).
+    //
+    //   A 10-K filed with the SEC is NOT automatically part of the live non-shelf prospectus
+    //   unless the prospectus itself has forward IBR language, or a 424B/POS AM expressly
+    //   incorporates it. For most S-1/non-shelf registrations, there is NO forward IBR.
+    //
+    //   If a 424B3 with only quarterly (unaudited) financials was the most recent update,
+    //   the 16-month clock still runs from the audited annual financials that were last
+    //   made part of the live prospectus.
+    //
+    // =============================================================================
 
     const NINE_MONTHS = 274;
     const SIXTEEN_MONTHS = 487;
 
+    // Hoist variables used in both shelf and non-shelf branches AND in subsequent checks
+    const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
+    const mostRecentEffectiveUpdate = [latestProspectus, latestPostEffective]
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
+
     let fsStatus, fsDetail;
+    let annualStatus, annualDetail;
 
     if (isShelf) {
-      // S-3/F-3: kept current via IBR of annual reports
+      // -------------------------------------------------------------------------
+      // SHELF (S-3/F-3): kept current via automatic IBR of annual/quarterly reports.
+      // Company must be a current Exchange Act filer. Each new 10-K auto-incorporates.
+      // -------------------------------------------------------------------------
       if (!latestAnnual) {
         fsStatus = "fail";
-        fsDetail = `No annual report (10-K/20-F) filed after this shelf registration. A shelf prospectus requires at least one annual report incorporated by reference to remain current under Section 10(a)(3). Shelf is STALE.`;
+        fsDetail = `STALE — No annual report (10-K/20-F) found after this shelf registration. A shelf prospectus is kept current via incorporation by reference of annual reports. Without any 10-K filed after the shelf, there are no financials incorporated by reference. Shelf is NOT usable.`;
       } else {
         const annualDays = daysSince(latestAnnual.date);
         if (annualDays > SIXTEEN_MONTHS) {
           fsStatus = "fail";
-          fsDetail = `Most recent annual report (${latestAnnual.form}, ${latestAnnual.date}) is ${annualDays} days old — exceeding the 16-month Rule 3-12 limit. This shelf prospectus is STALE under Section 10(a)(3). A new 10-K must be filed and incorporated by reference.`;
+          fsDetail = `STALE — RULE 3-12 VIOLATION: Most recent annual report (${latestAnnual.form}, ${latestAnnual.date}) is ${annualDays} days old — exceeds the 16-month outer limit. The audited financials incorporated by reference into this shelf are too old. A new 10-K must be filed and incorporated before the shelf can be used.`;
         } else {
           fsStatus = "pass";
-          fsDetail = `Shelf registration is kept current via incorporation by reference of ${latestAnnual.form} filed ${annualDays} days ago (${latestAnnual.date}). Financial statements are within the 16-month Rule 3-12 window. Prospectus is current under Section 10(a)(3).`;
+          fsDetail = `CURRENT: Shelf is kept current via IBR of ${latestAnnual.form} (${latestAnnual.date}, ${annualDays} days ago). Audited financials are within the 16-month Rule 3-12 limit. Prospectus is usable under Section 10(a)(3).`;
         }
       }
+
+      annualStatus = fsStatus === "pass" ? "pass" : "fail";
+      annualDetail = fsDetail;
+
     } else {
-      // S-1/F-1 non-shelf:
-      // The 9-month clock runs from the effective date of the prospectus (or most recent update).
-      // A POS AM or new 424B resets the clock from its own effective/filing date.
+      // -------------------------------------------------------------------------
+      // NON-SHELF (S-1/F-1): Two-step analysis — 9-month test THEN 16-month test.
+      // -------------------------------------------------------------------------
 
-      const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
+      // (effectiveDate and mostRecentEffectiveUpdate already defined above)
 
-      // Most recent EFFECTIVE update that resets the 9-month clock.
-      // CRITICAL RULES:
-      // 1. A POS AM ONLY resets the clock if it has been declared effective by the SEC (EFFECT notice).
-      //    A filed-but-not-yet-effective POS AM does NOT reset the clock.
-      // 2. A 424B prospectus IS effective upon filing — no EFFECT notice needed.
-      // 3. A pre-effective amendment (S-1/A, F-1/A) does NOT reset the 9-month clock — it is
-      //    a pre-effectiveness amendment, not a post-effective prospectus update.
-      //    Only POS AM (declared effective) or 424B resets the clock.
-      const mostRecentEffectiveUpdate = [latestProspectus, latestPostEffective]
-        .filter(Boolean)
-        .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
-
-      // The clock baseline: most recent effective update date, or the original effective date
-      // If there is NO effective update at all, the clock runs from the original registration's
-      // effective date (effectiveDate). If effectiveDate equals regDate (no EFFECT notice found),
-      // we conservatively use the registration filing date as the clock start.
-      const clockBaseDate = mostRecentEffectiveUpdate ? new Date(mostRecentEffectiveUpdate.date) : effectiveDate;
-      const daysSinceClock = Math.floor((new Date() - clockBaseDate) / (1000 * 60 * 60 * 24));
-
-      // Build a note if there's a pending POS AM that hasn't been declared effective yet
       const pendingNote = latestPendingPosAm
-        ? ` NOTE: A POS AM was filed on ${latestPendingPosAm.date} but has NOT yet been declared effective by the SEC — it does NOT reset the 9-month clock until the SEC issues an EFFECT notice.`
+        ? ` ⚠ POS AM filed ${latestPendingPosAm.date} has NOT been declared effective (no EFFECT notice) — it does NOT update the live prospectus until the SEC issues effectiveness.`
         : "";
 
-      // Clock explanation string for use in detail messages
-      const clockExplanation = mostRecentEffectiveUpdate
-        ? `The 9-month clock is running from the most recent declared-effective update: ${mostRecentEffectiveUpdate.form} on ${mostRecentEffectiveUpdate.date} (${daysSinceClock} days ago).`
-        : `The 9-month clock is running from the original registration effective date: ${clockBaseDate.toISOString().split("T")[0]} (${daysSinceClock} days ago). No subsequent effective prospectus update (declared-effective POS AM or 424B) has been found.`;
+      // --- STEP 1: 9-MONTH TEST ---
+      // Clock runs from original effective date OR most recent valid update, whichever is later.
+      const nineMonthClockBase = mostRecentEffectiveUpdate
+        ? new Date(mostRecentEffectiveUpdate.date)
+        : effectiveDate;
+      const daysSinceNineMonthClock = Math.floor((new Date() - nineMonthClockBase) / (1000 * 60 * 60 * 24));
+      const nineMonthViolation = daysSinceNineMonthClock > NINE_MONTHS;
 
-      if (daysSinceClock > SIXTEEN_MONTHS) {
-        fsStatus = "fail";
-        fsDetail = `STALE — RULE 3-12 VIOLATION: ${clockExplanation} This exceeds the 16-month Rule 3-12 financial statement age limit. The prospectus CANNOT be used. A new POS AM with updated audited financials must be filed and declared effective immediately.${pendingNote}`;
-      } else if (daysSinceClock > NINE_MONTHS) {
-        fsStatus = "fail";
-        fsDetail = `STALE — SECTION 10(a)(3) VIOLATION: ${clockExplanation} This exceeds the 9-month limit under Section 10(a)(3). The prospectus CANNOT be used for offers or sales until a new prospectus update (POS AM declared effective, or new 424B) resets the clock. A pre-effective /A amendment does NOT satisfy this requirement — only a declared-effective POS AM or 424B counts.${pendingNote}`;
+      const nineMonthClockLabel = mostRecentEffectiveUpdate
+        ? `${mostRecentEffectiveUpdate.form} filed ${mostRecentEffectiveUpdate.date}`
+        : `original effective date ${nineMonthClockBase.toISOString().split("T")[0]}`;
+
+      // --- STEP 2: 16-MONTH ANNUAL STALENESS TEST ---
+      // What are the most recent AUDITED annual financials actually IN the live prospectus?
+      //
+      // For a non-shelf S-1, the live prospectus contains the annuals that were in the
+      // most recent declared-effective document (original reg or most recent effective POS AM).
+      //
+      // A 424B3 with ONLY quarterly (unaudited) financials does NOT update the annual staleness
+      // clock — the 16-month clock continues to run from the last audited annuals in the prospectus.
+      //
+      // We determine which annuals are "in" the live prospectus:
+      //   1. If there is a declared-effective POS AM that post-dates the most recent 10-K -> that POS AM
+      //      likely incorporated updated audited annuals. Use POS AM date as proxy for annual FS date.
+      //   2. If the most recent 424B3 post-dates the most recent 10-K -> the 424B3 likely incorporated
+      //      annuals. Use 424B3 date as proxy.
+      //   3. Otherwise: the annuals in the live prospectus are the ones in the original registration
+      //      (or most recent effective POS AM that pre-dates the latest 10-K).
+      //      In this case, look at what annual was available at the time of the last effective document.
+      //
+      // We also check: has a 10-Q been filed with the SEC that is NOT part of the live prospectus?
+      // If so, we flag it — the transfer agent may treat this as a deficiency.
+
+      // Annuals filed before or around the original effective date (what was IN the reg at effectiveness)
+      const annualsInOriginalReg = annuals.filter(f => new Date(f.date) <= effectiveDate);
+      // The annual that was in the original registration
+      const annualInOriginalReg = annualsInOriginalReg[0] || null;
+
+      // Most recent effective document (POS AM or 424B that is the live prospectus baseline)
+      const liveProspectusBaseline = mostRecentEffectiveUpdate;
+
+      // Determine: what annual financials are currently IN the live prospectus?
+      // - If there's a POS AM declared effective after the latest 10-K -> that POS AM likely has new annuals
+      // - If there's a 424B3 filed after the latest 10-K -> that 424B3 likely incorporated new annuals
+      // - Otherwise -> the most recent 10-K that was available at or before the last effective document date
+      let annualInLiveProspectus = null;
+      let annualInLiveProspectusSource = "";
+
+      if (liveProspectusBaseline) {
+        const baselineDate = new Date(liveProspectusBaseline.date);
+        // Annuals available at or before the live baseline — these are what the baseline doc incorporated
+        const annualsAtBaseline = annuals.filter(f => new Date(f.date) <= baselineDate);
+        annualInLiveProspectus = annualsAtBaseline[0] || null;
+        annualInLiveProspectusSource = annualInLiveProspectus
+          ? `incorporated via ${liveProspectusBaseline.form} (${liveProspectusBaseline.date})`
+          : `no annual available at baseline date ${liveProspectusBaseline.date}`;
       } else {
-        fsStatus = "pass";
-        fsDetail = mostRecentEffectiveUpdate
-          ? `Within 9-month window: ${clockExplanation}${pendingNote}`
-          : `Within 9-month window: ${clockExplanation}`;
+        // No subsequent effective update — annuals are those in the original reg
+        annualInLiveProspectus = annualInOriginalReg;
+        annualInLiveProspectusSource = annualInLiveProspectus
+          ? `in original registration effective ${effectiveDate.toISOString().split("T")[0]}`
+          : "no annual found in original registration";
+      }
+
+      const annualDaysInLiveProspectus = annualInLiveProspectus ? daysSince(annualInLiveProspectus.date) : null;
+      const sixteenMonthViolation = annualDaysInLiveProspectus !== null && annualDaysInLiveProspectus > SIXTEEN_MONTHS;
+
+      // 10-Qs filed with the SEC but NOT part of the live prospectus
+      const tenQsNotInProspectus = latestQuarterly && liveProspectusBaseline
+        ? quarterlies.filter(f => new Date(f.date) > new Date(liveProspectusBaseline.date))
+        : liveProspectusBaseline === null ? quarterlies : [];
+      // Even without a 424B3, if 10-Qs exist after the live prospectus baseline, they are NOT in the prospectus
+      const unincorporatedQs = tenQsNotInProspectus.length;
+
+      // --- COMPOSE THE PROSPECTUS CURRENCY STATUS ---
+      if (!effectiveness.effective) {
+        // Registration not even effective — can't analyze further
+        fsStatus = "fail";
+        fsDetail = `Registration statement not yet declared effective — prospectus cannot be used at all.${pendingNote}`;
+      } else if (sixteenMonthViolation) {
+        // 16-month annual staleness — outer limit hit regardless of 9-month status
+        fsStatus = "fail";
+        fsDetail = `STALE — RULE 3-12 / 16-MONTH ANNUAL VIOLATION: The audited annual financials in the live prospectus (${annualInLiveProspectus.form} ${annualInLiveProspectus.date}, ${annualInLiveProspectusSource}) are ${annualDaysInLiveProspectus} days old — exceeding the 16-month outer limit. The prospectus CANNOT be used. Even if quarterly financials have been filed with the SEC (${unincorporatedQs} unincorporated 10-Q(s) on EDGAR), those 10-Qs are NOT part of the live prospectus unless expressly incorporated via a 424B3 supplement or declared-effective POS AM. A POS AM with updated AUDITED annual financials must be filed and declared effective.${pendingNote}`;
+      } else if (nineMonthViolation) {
+        // 9-month staleness — prospectus is stale but 16-month limit not yet hit
+        const projectedSixteenMonthDate = annualInLiveProspectus
+          ? new Date(new Date(annualInLiveProspectus.date).getTime() + SIXTEEN_MONTHS * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+          : "unknown";
+        fsStatus = "fail";
+        fsDetail = `STALE — SECTION 10(a)(3) 9-MONTH VIOLATION: The live prospectus has not been updated in ${daysSinceNineMonthClock} days (clock running from ${nineMonthClockLabel}). The prospectus CANNOT be used. Note: Even a valid Q3 424B3 supplement would only cure the 9-month staleness for the interim period — the audited annual financials (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) in the live prospectus would still become too old around ${projectedSixteenMonthDate} (16-month outer limit). ${unincorporatedQs > 0 ? `${unincorporatedQs} 10-Q(s) have been filed with the SEC since the last prospectus update but are NOT part of the live prospectus — 10-Q filings alone do not update the prospectus without a 424B3 supplement or declared-effective POS AM.` : ""}${pendingNote}`;
+      } else {
+        // Within 9-month window — check if there are unincorporated 10-Qs that create a gap
+        if (unincorporatedQs > 0) {
+          fsStatus = "warn";
+          fsDetail = `INTERIM UPDATE GAP — Prospectus is within the 9-month window (${daysSinceNineMonthClock} days since ${nineMonthClockLabel}), but ${unincorporatedQs} subsequent 10-Q(s) have been filed with the SEC and are NOT expressly incorporated into the live prospectus. A transfer agent or broker may flag this as a deficiency. A 424B3 supplement incorporating the latest quarterly financials is advisable to keep the live prospectus current. Audited annuals in the live prospectus (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) have ${annualDaysInLiveProspectus !== null ? SIXTEEN_MONTHS - annualDaysInLiveProspectus : "?"} days before the 16-month outer limit.${pendingNote}`;
+        } else {
+          fsStatus = "pass";
+          fsDetail = `CURRENT: Prospectus is within the 9-month window (${daysSinceNineMonthClock} days since ${nineMonthClockLabel}). Audited annuals in the live prospectus (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) are ${annualDaysInLiveProspectus} days old — within the 16-month Rule 3-12 limit. Prospectus is usable.${pendingNote}`;
+        }
+      }
+
+      // Annual status check — separate check for annual filing currency
+      if (!latestAnnual) {
+        annualStatus = "info";
+        annualDetail = "No 10-K filed after this registration statement. If the offering is ongoing, the prospectus cannot be updated with new annual financials until a 10-K is filed.";
+      } else {
+        const annualDays = daysSince(latestAnnual.date);
+        // Is the latest annual ALREADY incorporated into the live prospectus?
+        const latestAnnualInProspectus = annualInLiveProspectus && annualInLiveProspectus.accession === latestAnnual.accession;
+        if (latestAnnualInProspectus) {
+          annualStatus = annualDays <= 455 ? "pass" : "fail";
+          annualDetail = annualStatus === "pass"
+            ? `Most recent 10-K (${latestAnnual.date}, ${annualDays} days ago) is incorporated into the live prospectus (${annualInLiveProspectusSource}). Annual financials are current.`
+            : `Most recent 10-K (${latestAnnual.date}, ${annualDays} days ago) may have missed an annual cycle.`;
+        } else {
+          // A newer 10-K exists but is NOT yet part of the live prospectus
+          annualStatus = "warn";
+          annualDetail = `A more recent 10-K (${latestAnnual.form}, ${latestAnnual.date}) has been filed with the SEC but is NOT part of the live prospectus. The live prospectus still contains the older annual financials (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}). To update: file a 424B3 supplement or a POS AM (must be declared effective) that expressly incorporates the new 10-K.`;
+        }
       }
     }
 
     checks.push({
       id: "financial_statements",
-      label: "Prospectus Currency — Section 10(a)(3) (9-Month Rule)",
+      label: "Prospectus Currency — Section 10(a)(3) / Rule 427",
       status: fsStatus,
       detail: fsDetail,
-      filingDate: latestPostEffective?.date || latestProspectus?.date || latestAmendment?.date || null,
-      filingUrl: edgarUrl(latestPostEffective || latestProspectus || latestAmendment),
-      filingForm: latestPostEffective?.form || latestProspectus?.form || latestAmendment?.form || null,
+      filingDate: latestPostEffective?.date || latestProspectus?.date || null,
+      filingUrl: edgarUrl(latestPostEffective || latestProspectus),
+      filingForm: latestPostEffective?.form || latestProspectus?.form || null,
     });
 
-    // --- CHECK B: Annual Report Updates ---
-    let annualStatus, annualDetail;
-    if (!latestAnnual) {
-      annualStatus = isShelf ? "fail" : "info";
-      annualDetail = isShelf
-        ? "No 10-K filed after this shelf registration. A shelf prospectus requires incorporation by reference of subsequent annual reports."
-        : "No 10-K filed after this registration statement. If this is an ongoing offering, annual updates are required under Section 10(a)(3).";
-    } else {
-      const annualDays = daysSince(latestAnnual.date);
-      annualStatus = annualDays <= 455 ? "pass" : "fail";
-      annualDetail = annualStatus === "pass"
-        ? `${latestAnnual.form} filed ${annualDays} days ago on ${latestAnnual.date}. Annual reporting is current since registration.`
-        : `Last ${latestAnnual.form} was ${annualDays} days ago (${latestAnnual.date}). Company may have missed an annual reporting cycle since this registration was filed.`;
-    }
     checks.push({
       id: "annual_reports",
-      label: `Annual Reports (10-K) Filed Since Registration`,
+      label: "Annual Financials In Live Prospectus (16-Month Rule 3-12 Limit)",
       status: annualStatus,
       detail: annualDetail,
       filingDate: latestAnnual?.date || null,
@@ -375,8 +487,16 @@ Deno.serve(async (req) => {
       count: annuals.length,
     });
 
-    // --- CHECK C: Quarterly Reports (10-Q) ---
-    // Determine expected Q count based on how long since last 10-K (no Q4 rule)
+    // --- CHECK C: Quarterly Reports — EDGAR Currency + Prospectus Incorporation Gap ---
+    // Two distinct questions:
+    //   (1) Is the company current in filing 10-Qs with the SEC? (Exchange Act obligation)
+    //   (2) Are those 10-Qs actually PART OF the live prospectus?
+    //       Filing a 10-Q with the SEC does NOT automatically update a non-shelf prospectus.
+    //       For the prospectus to reflect interim financials, the issuer must file either:
+    //         (a) a 424B3 supplement expressly incorporating the 10-Q, OR
+    //         (b) a POS AM that is declared effective by the SEC.
+    //       The 9-month and 16-month rules do NOT treat a bare 10-Q as a prospectus update.
+
     let quarterlyStatus, quarterlyDetail;
     const annualDateForQ = latestAnnual ? new Date(latestAnnual.date) : null;
     const annualDaysForQ = latestAnnual ? daysSince(latestAnnual.date) : null;
@@ -391,23 +511,35 @@ Deno.serve(async (req) => {
       else if (annualDaysForQ > 90) expectedQ = 1;
     }
 
+    // For non-shelf: how many 10-Qs are unincorporated into the live prospectus?
+    const liveProspectusBaselineDate = !isShelf && mostRecentEffectiveUpdate
+      ? new Date(mostRecentEffectiveUpdate.date)
+      : effectiveDate;
+    const unincorporatedQuarterlies = !isShelf
+      ? quarterlies.filter(f => new Date(f.date) > liveProspectusBaselineDate)
+      : [];
+
     if (!annualDateForQ) {
       quarterlyStatus = "info";
       quarterlyDetail = "No 10-K filed after this registration — cannot assess 10-Q currency without an annual baseline.";
     } else if (expectedQ === 0) {
       quarterlyStatus = "pass";
-      quarterlyDetail = `10-K was filed ${annualDaysForQ} days ago — no quarterly report is due yet (within the Q1 window).`;
-    } else if (quartersFiledSinceAnnual >= expectedQ) {
-      quarterlyStatus = "pass";
-      quarterlyDetail = `${quartersFiledSinceAnnual} of ${expectedQ} expected 10-Q(s) filed since the last 10-K. Quarterly reporting is current. (No Q4 10-Q required — covered by the 10-K.)`;
-    } else {
+      quarterlyDetail = `10-K filed ${annualDaysForQ} days ago — no quarterly report is yet due. No quarterly incorporation gap.`;
+    } else if (quartersFiledSinceAnnual < expectedQ) {
       const missing = expectedQ - quartersFiledSinceAnnual;
       quarterlyStatus = "fail";
-      quarterlyDetail = `Only ${quartersFiledSinceAnnual} of ${expectedQ} expected 10-Q(s) filed since the last 10-K (${latestAnnual.date}). ${missing} report(s) appear missing.`;
+      quarterlyDetail = `EDGAR FILING GAP: Only ${quartersFiledSinceAnnual} of ${expectedQ} expected 10-Q(s) filed since last 10-K (${latestAnnual.date}). ${missing} report(s) missing — company may be delinquent in Exchange Act reporting.`;
+    } else if (!isShelf && unincorporatedQuarterlies.length > 0) {
+      // Company is current on 10-Qs but they are not in the live prospectus
+      quarterlyStatus = "warn";
+      quarterlyDetail = `PROSPECTUS INCORPORATION GAP: Company is current in filing 10-Qs with the SEC (${quartersFiledSinceAnnual} filed since last 10-K), but ${unincorporatedQuarterlies.length} 10-Q(s) filed after the last prospectus update (${mostRecentEffectiveUpdate?.date || effectiveDate.toISOString().split("T")[0]}) are NOT part of the live prospectus. A 10-Q filed with the SEC does NOT update a non-shelf prospectus. To incorporate: file a 424B3 supplement or a declared-effective POS AM. Most recent unincorporated: ${unincorporatedQuarterlies[0].form} ${unincorporatedQuarterlies[0].date}.`;
+    } else {
+      quarterlyStatus = "pass";
+      quarterlyDetail = `${quartersFiledSinceAnnual} of ${expectedQ} expected 10-Q(s) filed since last 10-K. Quarterly Exchange Act reporting is current. (No Q4 10-Q required — covered by 10-K.)`;
     }
     checks.push({
       id: "quarterly_reports",
-      label: "Quarterly Reports (10-Q) Current Since Last 10-K",
+      label: "Quarterly Reports — EDGAR Currency & Prospectus Incorporation",
       status: quarterlyStatus,
       detail: quarterlyDetail,
       filingDate: latestQuarterly?.date || null,
@@ -477,16 +609,20 @@ Deno.serve(async (req) => {
     const checkSummary = checks.map(c => `[${c.status.toUpperCase()}] ${c.label}: ${c.detail}`).join("\n");
 
     const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt: `You are a securities law compliance expert. A user wants to know: "Can this registration statement currently be used for offers and sales of securities?"
+      prompt: `You are a securities law compliance expert applying the Section 10(a)(3) / Rule 427 two-step framework.
+
+The correct framework is:
+STEP 1 (9-month test): A prospectus cannot be used more than 9 months from its effective date unless updated via a valid 424B supplement (effective on filing) or a declared-effective POS AM. A POS AM that has NOT been declared effective does NOT reset the clock. A bare 10-Q or 10-K filed with the SEC does NOT update the live prospectus.
+STEP 2 (16-month outer limit): Regardless of the 9-month test, the audited annual financials actually IN the live prospectus cannot be older than 16 months. A 424B3 with only quarterly/interim financials cures the 9-month test but does NOT extend the 16-month annual limit — the annuals still age from when they were last made part of the live prospectus.
 
 Company: ${companyName} (${ticker.toUpperCase()})
 Form: ${selectedReg.form} filed ${selectedReg.date}
 Type: ${isShelf ? "Shelf (S-3/F-3)" : "Non-Shelf (S-1/F-1)"}
 
-Individual compliance checks:
+Compliance checks:
 ${checkSummary}
 
-Give a direct, plain-English answer in 2-3 sentences. State clearly YES or NO whether the registration is currently usable. Identify the single most critical issue. State what action is needed, if any. Do not hedge if the answer is clear from the checks above.`,
+Give a direct answer (2-3 sentences): Can this registration be used TODAY for offers/sales? What is the single most critical reason? What must be done to cure it?`,
       response_json_schema: {
         type: "object",
         properties: {
