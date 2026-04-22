@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     const additionalFiles = subData.filings?.files || [];
     if (additionalFiles.length > 0) {
       const pageResponses = await Promise.all(
-        additionalFiles.map(f => fetch(`https://data.sec.gov${f.name}`, { headers: HEADERS }))
+        additionalFiles.map(f => fetch(`https://data.sec.gov/submissions/${f.name}`, { headers: HEADERS }))
       );
       for (const pageRes of pageResponses) {
         if (pageRes.ok) {
