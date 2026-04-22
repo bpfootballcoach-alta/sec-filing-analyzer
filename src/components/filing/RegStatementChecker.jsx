@@ -221,7 +221,7 @@ export default function RegStatementChecker() {
                     <Badge className={`text-sm font-bold px-3 py-1 border-0 ${overallCfg.badge}`}>{overallCfg.label}</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {detailResult.registration.form} filed {detailResult.registration.date} · {detailResult.companyName} ({detailResult.ticker}) · {detailResult.registration.isShelf ? "Shelf" : "Non-Shelf"}
+                    {detailResult.registration.form} filed {detailResult.registration.date} · {detailResult.companyName} ({detailResult.ticker}) · {detailResult.registration.isShelf ? "Shelf" : "Non-Shelf"}{detailResult.registration.isFPI ? " · FPI" : ""}{detailResult.registration.isFForm ? ` · F-form (${detailResult.registration.annualLimitMonths}mo annual / ${detailResult.registration.interimLimitMonths}mo interim)` : ""}
                   </p>
                 </div>
               </div>
