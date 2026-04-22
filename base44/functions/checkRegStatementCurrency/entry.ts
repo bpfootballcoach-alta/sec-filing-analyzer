@@ -120,8 +120,10 @@ Deno.serve(async (req) => {
 
     const isLikelyEffective = (regFiling) => {
       const form = regFiling.form?.toUpperCase().trim();
-      // S-8 is automatically effective upon filing
-      if (AUTO_EFFECTIVE_FORMS.includes(form)) return { effective: true, reason: "Auto-effective upon filing" };
+      // S-8, S-3, and F-3 are automatically effective upon filing (Rules 462(b)/(e))
+      if (form === "S-8" || form?.includes("S-3") || form?.includes("F-3")) {
+        return { effective: true, reason: `${form} auto-effective upon filing under Rule 462`, effectDate: regFiling.date };
+      }
 
       const regDate = new Date(regFiling.date);
       const fileNum = regFiling.fileNumber || null;
@@ -388,6 +390,33 @@ ${feeText.slice(0, 6000)}`,
     );
     const latestProspectus = prospectuses[0] || null;
 
+    // ENHANCEMENT: Parse latest prospectus document to find explicitly incorporated filings
+    // (e.g., "Form 20-F filed April 1, 2026" mentioned in a 424B3 supplement)
+    let prospectusIncorporatedDate = null;
+    let prospectusIncorporatedForm = null;
+    if (latestProspectus && latestProspectus.doc) {
+      try {
+        const prospectusUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${latestProspectus.accession.replace(/-/g, "")}/${latestProspectus.doc}`;
+        const prospRes = await fetch(prospectusUrl, { headers: HEADERS });
+        if (prospRes.ok) {
+          const prospText = await prospRes.text();
+          // Use LLM to extract the date of the latest incorporated annual report (20-F or 10-K)
+          const extractResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `Extract from this prospectus supplement the date of the MOST RECENT annual report (Form 20-F or Form 10-K) that is explicitly mentioned as being incorporated by reference or attached. Respond with ONLY the date in YYYY-MM-DD format, or "NOT_FOUND" if no date is found.`,
+            file_urls: [prospectusUrl],
+          });
+          if (extractResult && extractResult !== "NOT_FOUND" && /^\d{4}-\d{2}-\d{2}$/.test(extractResult)) {
+            prospectusIncorporatedDate = extractResult;
+            // Infer the form type from the text
+            if (prospText.includes("20-F")) prospectusIncorporatedForm = "20-F";
+            else if (prospText.includes("10-K")) prospectusIncorporatedForm = "10-K";
+          }
+        }
+      } catch (err) {
+        // If document fetch/parse fails, fall back to metadata-based approach
+      }
+    }
+
     // Annual reports filed after reg (domestic and FPI)
     const annuals = subsequentFilings.filter(f =>
       f.form === "10-K" || f.form === "20-F" || f.form === "10-K/A" || f.form === "20-F/A"
@@ -490,19 +519,21 @@ ${feeText.slice(0, 6000)}`,
 
     if (isShelf) {
       // SHELF (S-3/F-3): auto-IBR means each new annual automatically incorporates
-      if (!latestAnnual) {
+      // ENHANCEMENT: If a prospectus supplement explicitly incorporates a newer 20-F/10-K, use that date
+      const effectiveAnnualDate = prospectusIncorporatedDate || latestAnnual?.date;
+      if (!effectiveAnnualDate) {
         fsStatus = "fail";
         fsFailCode = "later_filing_not_incorporated";
         fsDetail = `No ${annualFormLabel} filed after shelf registration — no financials incorporated via IBR.`;
       } else {
-        const annualDays = daysSince(latestAnnual.date);
+        const annualDays = daysSince(effectiveAnnualDate);
         if (annualDays > ANNUAL_LIMIT) {
           fsStatus = "fail";
           fsFailCode = isFForm ? "fpi_audited_financials_older_than_15_or_18_months" : "audited_financials_older_than_16_months";
-          fsDetail = `${annualFormLabel} (${latestAnnual.date}) is ${annualDays} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit.`;
+          fsDetail = `${annualFormLabel} (${effectiveAnnualDate}) is ${annualDays} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit.`;
         } else {
           fsStatus = "pass";
-          fsDetail = `${annualFormLabel} (${latestAnnual.date}, ${annualDays} days ago) is within limit.`;
+          fsDetail = `${annualFormLabel} (${effectiveAnnualDate}, ${annualDays} days ago) is within limit.${prospectusIncorporatedDate ? ` Incorporated via latest prospectus supplement (${latestProspectus.form} ${latestProspectus.date}).` : ""}`;
         }
       }
     } else {
