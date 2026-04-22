@@ -401,9 +401,12 @@ ${feeText.slice(0, 6000)}`,
         if (prospRes.ok) {
           const prospText = await prospRes.text();
           // Use LLM to extract the date of the latest incorporated annual report (20-F or 10-K)
+          // Pass text content directly (not file_urls which doesn't support .htm)
           const extractResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `Extract from this prospectus supplement the date of the MOST RECENT annual report (Form 20-F or Form 10-K) that is explicitly mentioned as being incorporated by reference or attached. Respond with ONLY the date in YYYY-MM-DD format, or "NOT_FOUND" if no date is found.`,
-            file_urls: [prospectusUrl],
+            prompt: `Extract from this prospectus supplement the date of the MOST RECENT annual report (Form 20-F or Form 10-K) that is explicitly mentioned as being incorporated by reference or attached. Respond with ONLY the date in YYYY-MM-DD format, or "NOT_FOUND" if no date is found.
+
+Document (first 8000 chars):
+${prospText.slice(0, 8000)}`,
           });
           if (extractResult && extractResult !== "NOT_FOUND" && /^\d{4}-\d{2}-\d{2}$/.test(extractResult)) {
             prospectusIncorporatedDate = extractResult;
@@ -538,24 +541,31 @@ ${feeText.slice(0, 6000)}`,
       }
     } else {
       // NON-SHELF (S-1/F-1/F-4): prospectus must be validly updated
-      // Annual FS only count if included in the live prospectus (effective POS AM or 424B)
-      // For F-1/F-3/S-1: only effective POS AM counts as valid update (424B is not reliable for annual incorporation)
+      // CRITICAL: For non-shelf, we need to READ the 424B document to find what it incorporates
+      // (metadata alone is not enough — must verify express incorporation)
       
-      const annualBaselineDate = latestPostEffective ? new Date(latestPostEffective.date) : effectiveDate;
-      const annualsAtBaseline = allAnnuals.filter(f => new Date(f.date) <= annualBaselineDate);
-      const annualInLiveProspectus = annualsAtBaseline[0] || null;
-      
-      // If no annual after reg date, use reg date as proxy (audited FS embedded in original reg)
-      const annualFsProxyDate = annualInLiveProspectus ? annualInLiveProspectus.date : selectedReg.date;
-      const annualDaysOld = daysSince(annualFsProxyDate);
+      // Use the explicitly incorporated date from prospectus document if available,
+      // otherwise fall back to latest posteffective or prospectus metadata
+      const effectiveAnnualDateNonShelf = prospectusIncorporatedDate || 
+        (latestPostEffective ? new Date(latestPostEffective.date) : null) ||
+        (latestProspectus ? new Date(latestProspectus.date) : null);
 
-      if (annualDaysOld > ANNUAL_LIMIT) {
+      if (!effectiveAnnualDateNonShelf) {
+        // No valid prospectus update (no 424B, no POS AM) — can only use reg date's FS
         fsStatus = "fail";
         fsFailCode = isFForm ? "fpi_audited_financials_older_than_15_or_18_months" : "audited_financials_older_than_16_months";
-        fsDetail = `Audited FS (${annualFsProxyDate}) is ${annualDaysOld} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit.`;
+        fsDetail = `No 424B prospectus supplement or effective POS AM found after registration. Original prospectus FS (${selectedReg.date}) is ${daysSince(selectedReg.date)} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit.`;
       } else {
-        fsStatus = "pass";
-        fsDetail = `Audited FS (${annualFsProxyDate}) is ${annualDaysOld} days old — within limit.`;
+        // Prospectus was updated — use the incorporated annual FS date
+        const annualDaysOld = daysSince(effectiveAnnualDateNonShelf);
+        if (annualDaysOld > ANNUAL_LIMIT) {
+          fsStatus = "fail";
+          fsFailCode = isFForm ? "fpi_audited_financials_older_than_15_or_18_months" : "audited_financials_older_than_16_months";
+          fsDetail = `Latest incorporated annual FS (${effectiveAnnualDateNonShelf}) via ${latestPostEffective?.form || latestProspectus?.form || "prospectus"} is ${annualDaysOld} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit.`;
+        } else {
+          fsStatus = "pass";
+          fsDetail = `Audited FS (${effectiveAnnualDateNonShelf}, ${annualDaysOld} days ago) incorporated via ${latestPostEffective?.form || latestProspectus?.form || "prospectus"} — within limit.${prospectusIncorporatedDate ? ` (Parsed from ${latestProspectus?.form || "supplement"} document)` : ""}`;
+        }
       }
     }
 
