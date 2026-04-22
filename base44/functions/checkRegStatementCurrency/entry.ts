@@ -33,23 +33,41 @@ Deno.serve(async (req) => {
     if (!ticker) return Response.json({ error: "ticker is required" }, { status: 400 });
 
     // Step 1: Resolve ticker -> CIK
-    const tickerRes = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: HEADERS });
+    // Use the SEC's official ticker-to-CIK mapping (company_tickers.json) as primary source.
+    // Also check company_tickers_exchange.json which includes more tickers.
+    const tickerUpper = ticker.toUpperCase();
+
+    const [tickerRes, tickerExRes] = await Promise.all([
+      fetch("https://www.sec.gov/files/company_tickers.json", { headers: HEADERS }),
+      fetch("https://www.sec.gov/files/company_tickers_exchange.json", { headers: HEADERS }),
+    ]);
     const tickerData = await tickerRes.json();
+    const tickerExData = tickerExRes.ok ? await tickerExRes.json() : null;
 
     let cik = null, companyName = null;
+
+    // Search primary ticker file
     for (const entry of Object.values(tickerData)) {
-      if (entry.ticker?.toUpperCase() === ticker.toUpperCase()) {
+      if (entry.ticker?.toUpperCase() === tickerUpper) {
         cik = String(entry.cik_str).padStart(10, "0");
         companyName = entry.title;
         break;
       }
     }
-    if (!cik) return Response.json({ error: `Could not find CIK for ticker: ${ticker}` }, { status: 404 });
 
-    // Step 2: Fetch ALL filings — recent page + all historical pagination files
-    const subRes = await fetch(`${EDGAR_BASE}/CIK${cik}.json`, { headers: HEADERS });
-    if (!subRes.ok) return Response.json({ error: "Failed to fetch EDGAR submissions" }, { status: 500 });
-    const subData = await subRes.json();
+    // If not found, search the exchange-specific ticker file (broader coverage)
+    if (!cik && tickerExData?.data) {
+      for (const row of tickerExData.data) {
+        // row format: [cik, name, ticker, exchange]
+        if (row[2]?.toUpperCase() === tickerUpper) {
+          cik = String(row[0]).padStart(10, "0");
+          companyName = row[1];
+          break;
+        }
+      }
+    }
+
+    if (!cik) return Response.json({ error: `Could not find CIK for ticker: ${ticker}` }, { status: 404 });
 
     const mergeFilingPage = (acc, page) => {
       const forms = page.form || [];
@@ -58,11 +76,19 @@ Deno.serve(async (req) => {
       const docs = page.primaryDocument || [];
       for (let i = 0; i < forms.length; i++) {
         if (forms[i] && dates[i]) {
-          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i] });
+          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik });
         }
       }
       return acc;
     };
+
+    // Step 2: Fetch ALL filings — recent page + all historical pagination files
+    const subRes = await fetch(`${EDGAR_BASE}/CIK${cik}.json`, { headers: HEADERS });
+    if (!subRes.ok) return Response.json({ error: "Failed to fetch EDGAR submissions" }, { status: 500 });
+    const subData = await subRes.json();
+
+    // Use the official company name from submissions if available
+    if (subData.name) companyName = subData.name;
 
     let filings = [];
     mergeFilingPage(filings, subData.filings?.recent || {});
@@ -83,10 +109,6 @@ Deno.serve(async (req) => {
 
     const edgarUrl = (f) => f
       ? `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${f.accession.replace(/-/g, "")}/${f.doc}`
-      : null;
-
-    const edgarIndexUrl = (f) => f
-      ? `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${parseInt(cik)}&type=${f.form}&dateb=&owner=include&count=40`
       : null;
 
     // Step 3: If no accession selected, return list of all registration statements

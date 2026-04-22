@@ -184,6 +184,7 @@ export default function RegStatementChecker() {
                       {reg.effective === true && (
                         <Badge className="text-xs border-0 bg-emerald-100 text-emerald-700">Effective</Badge>
                       )}
+
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">{reg.daysOld} days ago{reg.effectDate ? ` · Effective ${reg.effectDate}` : ""}</p>
                   </div>
