@@ -76,9 +76,10 @@ Deno.serve(async (req) => {
       const docs = page.primaryDocument || [];
       const fileNumbers = page.fileNumber || [];
       const descriptions = page.primaryDocDescription || [];
+      const sizes = page.size || [];
       for (let i = 0; i < forms.length; i++) {
         if (forms[i] && dates[i]) {
-          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik, fileNumber: fileNumbers[i] || null, description: descriptions[i] || null });
+          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik, fileNumber: fileNumbers[i] || null, description: descriptions[i] || null, size: sizes[i] || 0 });
         }
       }
       return acc;
@@ -229,6 +230,64 @@ ${regFilingsWithMeta.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Desc
     // Step 4: Deep-check the selected registration statement
     const selectedReg = filings.find(f => f.accession === accession);
     if (!selectedReg) return Response.json({ error: "Registration statement not found" }, { status: 404 });
+
+    // Fetch the filing fee table (EX-FILING FEES document) to get securities registered
+    // Parse the .htm index page to find the EX-FILING FEES exhibit filename
+    let securitiesRegistered = null;
+    try {
+      const accNo = accession.replace(/-/g, "");
+      const idxRes = await fetch(
+        `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
+        { headers: HEADERS }
+      );
+      if (idxRes.ok) {
+        const idxHtml = await idxRes.text();
+        // Find the EX-FILING FEES row and extract the filename
+        // The HTML table has rows like: <td>EX-FILING FEES</td> ... <a href="filename.htm">
+        const feeMatch = idxHtml.match(/EX-FILING FEE[^<]*<\/td>[\s\S]*?href="([^"]+\.htm)"/i)
+          || idxHtml.match(/href="([^"]+fees[^"]*\.htm)"/i)
+          || idxHtml.match(/href="([^"]+fee[^"]*\.htm)"/i);
+        const feeFilename = feeMatch ? feeMatch[1].split("/").pop() : null;
+
+        if (feeFilename) {
+          const feeUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${feeFilename}`;
+          const feeRes = await fetch(feeUrl, { headers: HEADERS });
+          if (feeRes.ok) {
+            const feeHtml = await feeRes.text();
+            const feeText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
+              prompt: `Extract the securities being registered from this SEC filing fee table. Return a concise structured summary. Include: security type, class title, number/amount registered, offering price per unit (if any), and total aggregate offering price. Also note if it's a primary offering, secondary/resale offering, or both.
+
+Fee table text (truncated):
+${feeText.slice(0, 6000)}`,
+              response_json_schema: {
+                type: "object",
+                properties: {
+                  summary: { type: "string" },
+                  securities: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        security_class: { type: "string" },
+                        offering_type: { type: "string" },
+                        amount_registered: { type: "string" },
+                        price_per_unit: { type: "string" },
+                        aggregate_offering_price: { type: "string" }
+                      }
+                    }
+                  },
+                  total_aggregate_offering_price: { type: "string" },
+                  offering_types: { type: "string" }
+                }
+              }
+            });
+          }
+        }
+      }
+    } catch (_) {
+      // Non-critical — continue without securities info
+    }
 
     const regDate = new Date(selectedReg.date);
     const regDays = daysSince(selectedReg.date);
@@ -784,6 +843,7 @@ Provide a direct 2-3 sentence verdict reflecting the overall status. State the p
         isWarrantReg,
         annualLimitMonths: Math.round(ANNUAL_LIMIT / 30),
         interimLimitMonths: Math.round(INTERIM_LIMIT / 30),
+        securitiesRegistered: securitiesRegistered || null,
       },
       overallStatus,
       aiSummary: aiSummary || null,

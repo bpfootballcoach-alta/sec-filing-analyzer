@@ -255,6 +255,57 @@ export default function RegStatementChecker() {
             )}
           </div>
 
+          {/* Securities Registered */}
+          {detailResult.registration.securitiesRegistered && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
+                <span className="text-sm font-semibold text-foreground">Securities Being Registered</span>
+                {detailResult.registration.securitiesRegistered.offering_types && (
+                  <span className="ml-2 text-xs text-muted-foreground">— {detailResult.registration.securitiesRegistered.offering_types}</span>
+                )}
+              </div>
+              <div className="px-4 py-3 space-y-3">
+                {detailResult.registration.securitiesRegistered.summary && (
+                  <p className="text-sm text-muted-foreground">{detailResult.registration.securitiesRegistered.summary}</p>
+                )}
+                {detailResult.registration.securitiesRegistered.securities?.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground">
+                          <th className="text-left py-1.5 pr-3 font-medium">Security</th>
+                          <th className="text-left py-1.5 pr-3 font-medium">Type</th>
+                          <th className="text-right py-1.5 pr-3 font-medium">Amount</th>
+                          <th className="text-right py-1.5 pr-3 font-medium">Price/Unit</th>
+                          <th className="text-right py-1.5 font-medium">Agg. Offering Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailResult.registration.securitiesRegistered.securities.map((s, i) => (
+                          <tr key={i} className="border-b border-border/50 last:border-0">
+                            <td className="py-1.5 pr-3 text-foreground">{s.security_class}</td>
+                            <td className="py-1.5 pr-3 text-muted-foreground">{s.offering_type}</td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-foreground">{s.amount_registered}</td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-muted-foreground">{s.price_per_unit || "—"}</td>
+                            <td className="py-1.5 text-right font-mono text-foreground">{s.aggregate_offering_price}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {detailResult.registration.securitiesRegistered.total_aggregate_offering_price && (
+                        <tfoot>
+                          <tr className="border-t border-border">
+                            <td colSpan={4} className="py-1.5 pr-3 text-xs font-semibold text-foreground">Total Aggregate Offering Price</td>
+                            <td className="py-1.5 text-right font-mono font-semibold text-foreground">{detailResult.registration.securitiesRegistered.total_aggregate_offering_price}</td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Individual checks */}
           <div className="space-y-2">
             {detailResult.checks.map(check => (
