@@ -537,17 +537,24 @@ ${feeText.slice(0, 6000)}`,
       const liveBaselineDate = liveProspectusBaseline ? new Date(liveProspectusBaseline.date) : effectiveDate;
 
       // ANNUAL FS IN LIVE PROSPECTUS
-      // Look at ALL filings (including pre-reg) at or before the live baseline date.
-      // The audited FS were filed WITH the registration statement itself, so we must
-      // search the full filing history — not just subsequentFilings.
+      // For non-shelf F-1/F-4: a 424B3 supplement does NOT prove it incorporated a 20-F.
+      // Only a declared-effective POS AM can pull in a newer annual for a non-shelf registration.
+      // Therefore, the annual FS baseline is:
+      //   - the most recent annual at or before the last EFFECTIVE POS AM date (if any), OR
+      //   - the most recent annual at or before the effectiveness date (original reg)
+      // A bare 424B3 does NOT advance the annual FS baseline for non-shelf registrations.
       const allAnnuals = filings.filter(f =>
         f.form === "10-K" || f.form === "20-F" || f.form === "10-K/A" || f.form === "20-F/A"
       );
-      const annualsAtBaseline = allAnnuals.filter(f => new Date(f.date) <= liveBaselineDate);
+      // Annual baseline: last effective POS AM date, or reg effectiveness date — NOT 424B date
+      const annualBaselineDate = latestPostEffective
+        ? new Date(latestPostEffective.date)
+        : effectiveDate;
+      const annualsAtBaseline = allAnnuals.filter(f => new Date(f.date) <= annualBaselineDate);
       const annualInLiveProspectus = annualsAtBaseline[0] || null;
       const annualInLiveProspectusSource = annualInLiveProspectus
-        ? (liveProspectusBaseline
-            ? `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (prospectus last updated via ${liveProspectusBaseline.form} ${liveProspectusBaseline.date})`
+        ? (latestPostEffective
+            ? `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (prospectus updated via effective POS AM ${latestPostEffective.date})`
             : `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (in original registration effective ${effectiveDate.toISOString().split("T")[0]})`)
         : "no annual found in original registration";
 
