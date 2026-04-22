@@ -409,8 +409,8 @@ Deno.serve(async (req) => {
       const annualInLiveProspectus = annualsAtBaseline[0] || null;
       const annualInLiveProspectusSource = annualInLiveProspectus
         ? (liveProspectusBaseline
-            ? `incorporated via ${liveProspectusBaseline.form} (${liveProspectusBaseline.date})`
-            : `in original registration effective ${effectiveDate.toISOString().split("T")[0]}`)
+            ? `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (prospectus last updated via ${liveProspectusBaseline.form} ${liveProspectusBaseline.date})`
+            : `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (in original registration effective ${effectiveDate.toISOString().split("T")[0]})`)
         : "no annual found in original registration";
 
       // If no standalone annual filing found, the audited FS were embedded in the registration
