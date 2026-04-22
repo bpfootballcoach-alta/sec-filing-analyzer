@@ -537,26 +537,18 @@ ${feeText.slice(0, 6000)}`,
       const liveBaselineDate = liveProspectusBaseline ? new Date(liveProspectusBaseline.date) : effectiveDate;
 
       // ANNUAL FS IN LIVE PROSPECTUS
-      // The live prospectus baseline determines what annuals are "in" it.
-      // For non-shelf (F-1/F-4): 424B3 supplements and effective POS AMs both count as updates.
-      // But we require the annual to be plausibly incorporated: filed within 90 days before the update.
+      // For non-shelf F-1/F-4: ONLY effective POS AMs can pull in newer annuals.
+      // 424B3 supplements are NOT reliable evidence of annual FS incorporation.
+      // Baseline: last effective POS AM (if any), otherwise original reg effectiveness date.
       const allAnnuals = filings.filter(f =>
         f.form === "10-K" || f.form === "20-F" || f.form === "10-K/A" || f.form === "20-F/A"
       );
-      const annualBaselineDate = liveProspectusBaseline ? new Date(liveProspectusBaseline.date) : effectiveDate;
+      // For non-shelf, use ONLY effective POS AM baseline, not 424B baseline
+      const annualBaselineDate = !isShelf && latestPostEffective
+        ? new Date(latestPostEffective.date)
+        : effectiveDate;
       const annualsAtBaseline = allAnnuals.filter(f => new Date(f.date) <= annualBaselineDate);
-      let annualInLiveProspectus = annualsAtBaseline[0] || null;
-      // SANITY CHECK: For non-shelf, if using a 424B as the baseline, the annual must be filed within 90 days before the 424B.
-      // This prevents false incorporation claims for unrelated 424Bs filed long after an old annual.
-      if (!isShelf && latestProspectus && !latestPostEffective && annualInLiveProspectus) {
-        const prospectusDate = new Date(latestProspectus.date);
-        const annualDate = new Date(annualInLiveProspectus.date);
-        const daysBetween = Math.floor((prospectusDate - annualDate) / (1000 * 60 * 60 * 24));
-        if (daysBetween > 90) {
-          // 424B is too far from the annual — don't credit it with incorporating the annual
-          annualInLiveProspectus = null;
-        }
-      }
+      const annualInLiveProspectus = annualsAtBaseline[0] || null;
       const annualInLiveProspectusSource = annualInLiveProspectus
         ? (liveProspectusBaseline
             ? `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (prospectus last updated via ${liveProspectusBaseline.form} ${liveProspectusBaseline.date})`
