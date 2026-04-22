@@ -232,60 +232,83 @@ ${regFilingsWithMeta.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Desc
     if (!selectedReg) return Response.json({ error: "Registration statement not found" }, { status: 404 });
 
     // Fetch the filing fee table (EX-FILING FEES document) to get securities registered
-    // Parse the .htm index page to find the EX-FILING FEES exhibit filename
+    // Use EDGAR's JSON index API to reliably find the EX-FILING FEES exhibit filename
     let securitiesRegistered = null;
     try {
       const accNo = accession.replace(/-/g, "");
-      const idxRes = await fetch(
-        `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
+      // Primary: use EDGAR filing index JSON (most reliable)
+      let feeFilename = null;
+      const jsonIdxRes = await fetch(
+        `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.json`,
         { headers: HEADERS }
-      );
-      if (idxRes.ok) {
-        const idxHtml = await idxRes.text();
-        // Find the EX-FILING FEES row and extract the filename
-        // The HTML table has rows like: <td>EX-FILING FEES</td> ... <a href="filename.htm">
-        const feeMatch = idxHtml.match(/EX-FILING FEE[^<]*<\/td>[\s\S]*?href="([^"]+\.htm)"/i)
-          || idxHtml.match(/href="([^"]+fees[^"]*\.htm)"/i)
-          || idxHtml.match(/href="([^"]+fee[^"]*\.htm)"/i);
-        const feeFilename = feeMatch ? feeMatch[1].split("/").pop() : null;
+      ).catch(() => null);
+      if (jsonIdxRes?.ok) {
+        const jsonIdx = await jsonIdxRes.json().catch(() => null);
+        if (jsonIdx?.documents) {
+          const feeDoc = jsonIdx.documents.find(d =>
+            d.type?.toUpperCase().includes("EX-FILING FEE") ||
+            d.description?.toUpperCase().includes("FILING FEE")
+          );
+          if (feeDoc) feeFilename = feeDoc.filename;
+        }
+      }
 
-        if (feeFilename) {
-          const feeUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${feeFilename}`;
-          const feeRes = await fetch(feeUrl, { headers: HEADERS });
-          if (feeRes.ok) {
-            const feeHtml = await feeRes.text();
-            const feeText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-            securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
-              prompt: `Extract the securities being registered from this SEC filing fee table. Return a concise structured summary. Include: security type, class title, number/amount registered, offering price per unit (if any), and total aggregate offering price. Also note if it's a primary offering, secondary/resale offering, or both.
+      // Fallback: scrape the HTML index and look for the type AFTER the href (correct column order)
+      if (!feeFilename) {
+        const htmIdxRes = await fetch(
+          `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
+          { headers: HEADERS }
+        ).catch(() => null);
+        if (htmIdxRes?.ok) {
+          const idxHtml = await htmIdxRes.text();
+          // Table row: <a href="filename.htm">filename</a> ... <td>EX-FILING FEES</td>
+          // Match each table row and check if it contains EX-FILING FEE type
+          const rowMatches = idxHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+          for (const row of rowMatches) {
+            if (/EX-FILING FEE/i.test(row)) {
+              const hrefMatch = row.match(/href="([^"]+\.htm)"/i);
+              if (hrefMatch) { feeFilename = hrefMatch[1].split("/").pop(); break; }
+            }
+          }
+        }
+      }
+
+      if (feeFilename) {
+        const feeUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${feeFilename}`;
+        const feeRes = await fetch(feeUrl, { headers: HEADERS });
+        if (feeRes.ok) {
+          const feeHtml = await feeRes.text();
+          const feeText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+          securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `Extract the securities being registered from this SEC filing fee table. Return a concise structured summary. Include: security type, class title, number/amount registered, offering price per unit (if any), and total aggregate offering price. Also note if it's a primary offering, secondary/resale offering, or both.
 
 Also produce a short "label" (5-10 words) listing the distinct security types being registered, e.g. "Common stock, warrants" or "Common stock, preferred stock & convertible notes" or "Underlying shares from warrants & convertible notes — resale".
 
 Fee table text (truncated):
 ${feeText.slice(0, 6000)}`,
-              response_json_schema: {
-                type: "object",
-                properties: {
-                  label: { type: "string" },
-                  summary: { type: "string" },
-                  securities: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        security_class: { type: "string" },
-                        offering_type: { type: "string" },
-                        amount_registered: { type: "string" },
-                        price_per_unit: { type: "string" },
-                        aggregate_offering_price: { type: "string" }
-                      }
+            response_json_schema: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                summary: { type: "string" },
+                securities: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      security_class: { type: "string" },
+                      offering_type: { type: "string" },
+                      amount_registered: { type: "string" },
+                      price_per_unit: { type: "string" },
+                      aggregate_offering_price: { type: "string" }
                     }
-                  },
-                  total_aggregate_offering_price: { type: "string" },
-                  offering_types: { type: "string" }
-                }
+                  }
+                },
+                total_aggregate_offering_price: { type: "string" },
+                offering_types: { type: "string" }
               }
-            });
-          }
+            }
+          });
         }
       }
     } catch (_) {
