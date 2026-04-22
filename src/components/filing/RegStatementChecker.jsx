@@ -172,9 +172,12 @@ export default function RegStatementChecker() {
                 <div className="flex items-center gap-3">
                   <FileText className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Badge variant="secondary" className="text-xs">{reg.form}</Badge>
                       <span className="text-sm font-medium text-foreground">{reg.date}</span>
+                      {reg.registrationNumber && (
+                        <span className="text-xs font-mono text-muted-foreground">Reg. No. {reg.registrationNumber}</span>
+                      )}
                       {reg.effective === false && (
                         <Badge className="text-xs border-0 bg-red-100 text-red-700">Not Effective</Badge>
                       )}

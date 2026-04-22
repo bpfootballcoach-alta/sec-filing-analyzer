@@ -150,14 +150,37 @@ Deno.serve(async (req) => {
       return REG_FORMS.some(r => form === r);
     });
 
+    // Helper: fetch registration number (e.g. 333-280366) from the filing index
+    const fetchRegistrationNumber = async (f) => {
+      const accNo = f.accession.replace(/-/g, "");
+      const indexUrl = `https://data.sec.gov/submissions/CIK${cik}/index/${accNo}.json`;
+      // Fallback: try the EDGAR filing index page
+      const indexUrl2 = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum=&State=0&SIC=&dateb=&owner=include&count=10&search_text=&accession=${f.accession}`;
+      try {
+        // The submissions JSON doesn't include the file number directly.
+        // Fetch the filing index JSON from EDGAR archives.
+        const idxRes = await fetch(
+          `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accNo}-index.json`,
+          { headers: HEADERS }
+        );
+        if (idxRes.ok) {
+          const idx = await idxRes.json();
+          return idx.fileNum || null; // e.g. "333-280366"
+        }
+      } catch (_) {}
+      return null;
+    };
+
     if (!accession) {
-      // Return list of registration statements for user to pick from
+      // Fetch registration numbers for all reg filings in parallel
+      const regNums = await Promise.all(regFilings.map(f => fetchRegistrationNumber(f)));
+
       return Response.json({
         mode: "list",
         ticker: ticker.toUpperCase(),
         cik,
         companyName,
-        registrationStatements: regFilings.map(f => {
+        registrationStatements: regFilings.map((f, i) => {
           const effectiveness = isLikelyEffective(f);
           return {
             form: f.form,
@@ -169,6 +192,7 @@ Deno.serve(async (req) => {
             effective: effectiveness.effective,
             effectiveReason: effectiveness.reason,
             effectDate: effectiveness.effectDate || null,
+            registrationNumber: regNums[i] || null,
           };
         }),
       });
