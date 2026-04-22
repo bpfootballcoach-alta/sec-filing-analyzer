@@ -145,6 +145,13 @@ Deno.serve(async (req) => {
       if (AUTO_EFFECTIVE_FORMS.includes(form)) return { effective: true, reason: "Auto-effective upon filing" };
 
       const regDate = new Date(regFiling.date);
+      const fileNum = regFiling.fileNumber || null;
+
+      // Helper: does a filing belong to the same registration (by file number, if available)?
+      const sameReg = (f) => {
+        if (!fileNum || !f.fileNumber) return true; // fallback: allow if either side is missing
+        return f.fileNumber === fileNum;
+      };
 
       // Check if an EFFECT notice was filed within 365 days after this reg statement
       const effectAfter = effectFilings.find(e => {
@@ -153,17 +160,17 @@ Deno.serve(async (req) => {
       });
       if (effectAfter) return { effective: true, reason: `EFFECT notice filed ${effectAfter.date}`, effectDate: effectAfter.date };
 
-      // Check if a 424B prospectus was filed after (strong proxy — only filed after effectiveness)
+      // Check if a 424B prospectus was filed after under the SAME file number (proxy for effectiveness)
       const prospectusAfter = filings.find(f => {
         const fDate = new Date(f.date);
-        return fDate > regDate && PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p));
+        return fDate > regDate && PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) && sameReg(f);
       });
       if (prospectusAfter) return { effective: true, reason: `424B prospectus filed ${prospectusAfter.date} (proxy for effectiveness)`, effectDate: prospectusAfter.date };
 
-      // Check if a POS AM was filed after (only filed post-effectiveness)
+      // Check if a POS AM was filed after under the SAME file number (only filed post-effectiveness)
       const posAmAfter = filings.find(f => {
         const fDate = new Date(f.date);
-        return fDate > regDate && POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim());
+        return fDate > regDate && POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim()) && sameReg(f);
       });
       if (posAmAfter) return { effective: true, reason: `POS AM filed ${posAmAfter.date} (proxy for effectiveness)`, effectDate: posAmAfter.date };
 
@@ -342,10 +349,23 @@ ${feeText.slice(0, 6000)}`,
     );
     const latestAmendment = amendments[0] || null;
 
+    // The registration's file number (e.g. "333-283617") — used to scope 424Bs and POS AMs
+    // to only those that belong to THIS specific registration statement.
+    // A company may have multiple active registrations; a 424B3 filed under one reg's file number
+    // must NOT be credited as an update to a different registration.
+    const regFileNumber = selectedReg.fileNumber || null;
+
+    const belongsToThisReg = (f) => {
+      // If we have a file number for the registration, only accept filings with the same file number.
+      // If either side is missing the file number, allow it (conservative fallback).
+      if (!regFileNumber || !f.fileNumber) return true;
+      return f.fileNumber === regFileNumber;
+    };
+
     // Post-effective amendments — EDGAR form type is "POS AM"
     // CRITICAL: A POS AM must itself be declared effective by the SEC to reset the 9-month clock.
     const allPostEffectiveAmendments = subsequentFilings.filter(f =>
-      POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim())
+      POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim()) && belongsToThisReg(f)
     );
     // Only count POS AMs that have their own EFFECT notice
     const effectivePostEffectiveAmendments = allPostEffectiveAmendments.filter(isPosAmEffective);
@@ -355,8 +375,9 @@ ${feeText.slice(0, 6000)}`,
     const latestPendingPosAm = pendingPostEffectiveAmendments[0] || null;
 
     // 424B prospectuses filed after reg (424Bs are effective upon filing — no EFFECT notice needed)
+    // CRITICAL: Only count 424Bs that share the same SEC file number as this registration.
     const prospectuses = subsequentFilings.filter(f =>
-      PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p))
+      PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) && belongsToThisReg(f)
     );
     const latestProspectus = prospectuses[0] || null;
 
