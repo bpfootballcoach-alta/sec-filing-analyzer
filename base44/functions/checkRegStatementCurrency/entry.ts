@@ -8,7 +8,7 @@ const daysSince = (dateStr) => {
   return Math.floor((new Date() - new Date(dateStr)) / (1000 * 60 * 60 * 24));
 };
 
-const REG_FORMS = ["S-1", "S-3", "F-1", "F-3", "S-11", "S-4", "S-8"];
+const REG_FORMS = ["S-1", "S-3", "F-1", "F-3", "F-4", "S-11", "S-4", "S-8"];
 const AMENDMENT_FORMS = ["S-1/A", "S-3/A", "F-1/A", "F-3/A", "S-4/A", "S-11/A"];
 const POST_EFFECTIVE_FORMS = ["POS AM", "POS AM/A"];
 const PROSPECTUS_FORMS = ["424B1", "424B2", "424B3", "424B4", "424B5", "424B7", "424B8", "PROSPECTUS"];
@@ -223,9 +223,9 @@ Deno.serve(async (req) => {
     );
     const latestProspectus = prospectuses[0] || null;
 
-    // Annual reports filed after reg
+    // Annual reports filed after reg (domestic and FPI)
     const annuals = subsequentFilings.filter(f =>
-      f.form === "10-K" || f.form === "20-F" || f.form === "10-K/A"
+      f.form === "10-K" || f.form === "20-F" || f.form === "10-K/A" || f.form === "20-F/A"
     );
     const latestAnnual = annuals[0] || null;
 
