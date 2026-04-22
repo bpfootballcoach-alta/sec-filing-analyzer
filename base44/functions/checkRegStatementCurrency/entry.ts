@@ -152,28 +152,24 @@ Deno.serve(async (req) => {
 
     // Helper: fetch registration number (e.g. 333-280366) from the filing index
     const fetchRegistrationNumber = async (f) => {
-      const accNo = f.accession.replace(/-/g, "");
-      const indexUrl = `https://data.sec.gov/submissions/CIK${cik}/index/${accNo}.json`;
-      // Fallback: try the EDGAR filing index page
-      const indexUrl2 = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum=&State=0&SIC=&dateb=&owner=include&count=10&search_text=&accession=${f.accession}`;
       try {
-        // The submissions JSON doesn't include the file number directly.
-        // Fetch the filing index JSON from EDGAR archives.
+        const accNo = f.accession.replace(/-/g, "");
         const idxRes = await fetch(
           `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accNo}-index.json`,
           { headers: HEADERS }
         );
         if (idxRes.ok) {
           const idx = await idxRes.json();
-          return idx.fileNum || null; // e.g. "333-280366"
+          return idx.fileNum || null;
         }
       } catch (_) {}
       return null;
     };
 
     if (!accession) {
-      // Fetch registration numbers for all reg filings in parallel
-      const regNums = await Promise.all(regFilings.map(f => fetchRegistrationNumber(f)));
+      // Fetch registration numbers for all reg filings in parallel — failures return null, never throw
+      const regNums = await Promise.allSettled(regFilings.map(f => fetchRegistrationNumber(f)))
+        .then(results => results.map(r => r.status === "fulfilled" ? r.value : null));
 
       return Response.json({
         mode: "list",
