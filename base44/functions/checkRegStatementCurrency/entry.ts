@@ -363,9 +363,18 @@ ${feeText.slice(0, 6000)}`,
     // A company may have multiple active registrations; a 424B3 filed under one reg's file number
     // must NOT be credited as an update to a different registration.
     const regFileNumber = selectedReg.fileNumber || null;
+    
+    // Pre-declare prospectus metadata so belongsToThisReg can use it
+    let prospectusIncorporatedDate = null;
+    let prospectusIncorporatedForm = null;
+    let prospectusRegNumber = null;
 
     const belongsToThisReg = (f) => {
-      // If we have a file number for the registration, only accept filings with the same file number.
+      // PRIMARY: If the prospectus document explicitly states which reg it updates, use that
+      if (prospectusRegNumber && f === latestProspectus) {
+        return prospectusRegNumber === regFileNumber;
+      }
+      // FALLBACK: If we have a file number for the registration, only accept filings with the same file number.
       // If either side is missing the file number, allow it (conservative fallback).
       if (!regFileNumber || !f.fileNumber) return true;
       return f.fileNumber === regFileNumber;
@@ -390,26 +399,38 @@ ${feeText.slice(0, 6000)}`,
     );
     const latestProspectus = prospectuses[0] || null;
 
-    // ENHANCEMENT: Parse latest prospectus document to find explicitly incorporated filings
-    // (e.g., "Form 20-F filed April 1, 2026" mentioned in a 424B3 supplement)
-    let prospectusIncorporatedDate = null;
-    let prospectusIncorporatedForm = null;
+    // ENHANCEMENT: Parse latest prospectus document to find:
+    // 1. The registration statement file number it updates
+    // 2. The incorporated annual report date (20-F or 10-K)
     if (latestProspectus && latestProspectus.doc) {
       try {
         const prospectusUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${latestProspectus.accession.replace(/-/g, "")}/${latestProspectus.doc}`;
         const prospRes = await fetch(prospectusUrl, { headers: HEADERS });
         if (prospRes.ok) {
           const prospText = await prospRes.text();
-          // Use LLM to extract the date of the latest incorporated annual report (20-F or 10-K)
-          // Pass text content directly (not file_urls which doesn't support .htm)
+          // Use LLM to extract BOTH the registration number AND the incorporated annual report date
           const extractResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `Extract from this prospectus supplement the date of the MOST RECENT annual report (Form 20-F or Form 10-K) that is explicitly mentioned as being incorporated by reference or attached. Respond with ONLY the date in YYYY-MM-DD format, or "NOT_FOUND" if no date is found.
+            prompt: `Extract from this prospectus supplement TWO pieces of information:
+1. The REGISTRATION FILE NUMBER (format: "333-XXXXXX") that this prospectus is updating/supplementing
+2. The MOST RECENT annual report date (Form 20-F or Form 10-K) that is explicitly mentioned as being incorporated by reference
 
-Document (first 8000 chars):
-${prospText.slice(0, 8000)}`,
+Respond as JSON: {"registration_number": "333-XXXXXX or null", "incorporated_date": "YYYY-MM-DD or null"}
+
+Document (first 10000 chars):
+${prospText.slice(0, 10000)}`,
+            response_json_schema: {
+              type: "object",
+              properties: {
+                registration_number: { type: ["string", "null"] },
+                incorporated_date: { type: ["string", "null"] }
+              }
+            }
           });
-          if (extractResult && extractResult !== "NOT_FOUND" && /^\d{4}-\d{2}-\d{2}$/.test(extractResult)) {
-            prospectusIncorporatedDate = extractResult;
+          if (extractResult?.registration_number) {
+            prospectusRegNumber = extractResult.registration_number;
+          }
+          if (extractResult?.incorporated_date && /^\d{4}-\d{2}-\d{2}$/.test(extractResult.incorporated_date)) {
+            prospectusIncorporatedDate = extractResult.incorporated_date;
             // Infer the form type from the text
             if (prospText.includes("20-F")) prospectusIncorporatedForm = "20-F";
             else if (prospText.includes("10-K")) prospectusIncorporatedForm = "10-K";
