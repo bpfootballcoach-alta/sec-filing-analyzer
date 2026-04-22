@@ -74,9 +74,10 @@ Deno.serve(async (req) => {
       const dates = page.filingDate || [];
       const accessions = page.accessionNumber || [];
       const docs = page.primaryDocument || [];
+      const fileNumbers = page.fileNumber || [];
       for (let i = 0; i < forms.length; i++) {
         if (forms[i] && dates[i]) {
-          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik });
+          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik, fileNumber: fileNumbers[i] || null });
         }
       }
       return acc;
@@ -173,33 +174,13 @@ Deno.serve(async (req) => {
       return REG_FORMS.some(r => form === r || form === r + "/A" || form.startsWith(r + "/"));
     });
 
-    // Helper: fetch registration number (e.g. 333-280366) from the filing index
-    const fetchRegistrationNumber = async (f) => {
-      try {
-        const accNo = f.accession.replace(/-/g, "");
-        const idxRes = await fetch(
-          `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accNo}-index.json`,
-          { headers: HEADERS }
-        );
-        if (idxRes.ok) {
-          const idx = await idxRes.json();
-          return idx.fileNum || null;
-        }
-      } catch (_) {}
-      return null;
-    };
-
     if (!accession) {
-      // Fetch registration numbers for all reg filings in parallel — failures return null, never throw
-      const regNums = await Promise.allSettled(regFilings.map(f => fetchRegistrationNumber(f)))
-        .then(results => results.map(r => r.status === "fulfilled" ? r.value : null));
-
       return Response.json({
         mode: "list",
         ticker: ticker.toUpperCase(),
         cik,
         companyName,
-        registrationStatements: regFilings.map((f, i) => {
+        registrationStatements: regFilings.map((f) => {
           const effectiveness = isLikelyEffective(f);
           return {
             form: f.form,
@@ -211,7 +192,7 @@ Deno.serve(async (req) => {
             effective: effectiveness.effective,
             effectiveReason: effectiveness.reason,
             effectDate: effectiveness.effectDate || null,
-            registrationNumber: regNums[i] || null,
+            registrationNumber: f.fileNumber || null,
           };
         }),
       });
