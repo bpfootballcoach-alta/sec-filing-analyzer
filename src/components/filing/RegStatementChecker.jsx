@@ -260,8 +260,8 @@ export default function RegStatementChecker() {
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
                 <span className="text-sm font-semibold text-foreground">Securities Being Registered</span>
-                {detailResult.registration.securitiesRegistered.offering_types && (
-                  <span className="ml-2 text-xs text-muted-foreground">— {detailResult.registration.securitiesRegistered.offering_types}</span>
+                {(detailResult.registration.securitiesRegistered.label || detailResult.registration.securitiesRegistered.offering_types) && (
+                  <span className="ml-2 text-xs text-muted-foreground">— {detailResult.registration.securitiesRegistered.label || detailResult.registration.securitiesRegistered.offering_types}</span>
                 )}
               </div>
               <div className="px-4 py-3 space-y-3">

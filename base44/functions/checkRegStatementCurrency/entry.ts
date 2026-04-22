@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
       }));
 
       const subjectSummaries = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `For each of the following SEC registration statement filings by ${companyName} (ticker: ${ticker.toUpperCase()}), write a concise 1-sentence subject summary (10-20 words) describing what is being registered — e.g. "IPO of 5,000,000 shares of common stock" or "Resale of shares issued in merger with XYZ Corp." or "Employee stock option plan covering up to 10,000,000 shares". Use the form type and any description clues provided. If it's an amendment (/A), note that. Return a JSON array in the same order as the input.
+        prompt: `For each of the following SEC registration statement filings by ${companyName} (ticker: ${ticker.toUpperCase()}), write a concise label (5-12 words) listing the types of securities being registered and the offering context. Examples: "Common stock — IPO", "Common stock & warrants — resale", "Underlying shares from convertible notes — resale", "Employee stock options — S-8 plan", "Common stock, preferred stock & warrants — shelf offering", "Merger consideration shares — S-4". Focus on security types (common stock, preferred stock, warrants, convertible notes, units, etc.) and whether it's a primary offering, resale/secondary, or merger/plan. If it's an amendment (/A), prepend "Amendment: ". Return a JSON array in the same order as the input.
 
 Filings:
 ${regFilingsWithMeta.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description hint: "${f.description}"`).join("\n")}`,
@@ -258,11 +258,14 @@ ${regFilingsWithMeta.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Desc
             securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
               prompt: `Extract the securities being registered from this SEC filing fee table. Return a concise structured summary. Include: security type, class title, number/amount registered, offering price per unit (if any), and total aggregate offering price. Also note if it's a primary offering, secondary/resale offering, or both.
 
+Also produce a short "label" (5-10 words) listing the distinct security types being registered, e.g. "Common stock, warrants" or "Common stock, preferred stock & convertible notes" or "Underlying shares from warrants & convertible notes — resale".
+
 Fee table text (truncated):
 ${feeText.slice(0, 6000)}`,
               response_json_schema: {
                 type: "object",
                 properties: {
+                  label: { type: "string" },
                   summary: { type: "string" },
                   securities: {
                     type: "array",
