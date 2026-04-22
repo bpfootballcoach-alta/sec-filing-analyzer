@@ -273,15 +273,22 @@ Deno.serve(async (req) => {
     // FINANCIAL STATEMENT AGE FRAMEWORK
     // =============================================================================
     //
-    // DOMESTIC ISSUERS (S-1, S-3, S-4):
-    //   Non-shelf: 9-month prospectus staleness / 16-month annual FS outer limit (Rule 3-12)
-    //   Shelf (S-3): kept current via automatic IBR of annual/quarterly reports
+    // DOMESTIC ISSUERS (S-1, S-3, S-4) — Rule 3-12 / Rule 427:
+    //   9-MONTH CLOCK: Measured from reg_effective_date (NOT from any POS AM or 424B supplement).
+    //     A 424B supplement or effective POS AM does NOT reset the 9-month clock for domestic issuers.
+    //     After 9 months, the prospectus can still be used IF the audited annual FS are within 16 months.
+    //     Rule 3-12 interim test: live prospectus must include financials at least as current as the
+    //     most recent 10-Q filed with the SEC (i.e., if a 10-Q exists post-prospectus-baseline, a
+    //     424B supplement incorporating it is required to cure the interim gap).
+    //   16-MONTH ANNUAL HARD STOP: If today > last_audited_fs_date_in_live_prospectus + 16 months → NOT CURRENT.
+    //   SHELF (S-3): automatic IBR of annual/quarterly reports; each new 10-K auto-incorporates.
     //
     // FOREIGN PRIVATE ISSUERS on F-forms (F-1, F-3, F-4) — Item 8 of Form 20-F:
-    //   Standard:  15-month annual FS / 9-month interim FS at effectiveness
+    //   Standard:  15-month annual FS / 9-month interim FS
     //   Warrant exercise relaxation: 18-month annual FS / 12-month interim FS
-    //   IBR on F-1: NOT automatic — only if prospectus expressly elects under General Instruction VI
+    //   IBR on F-1/F-4: NOT automatic — only if prospectus expressly elects under General Instruction VI
     //   F-3 (shelf): automatic IBR of annual/interim reports like S-3
+    //   6-Ks do NOT update the prospectus unless expressly incorporated.
     //
     // If FPI elects to file on a domestic form, domestic rules apply instead.
     // =============================================================================
@@ -302,153 +309,170 @@ Deno.serve(async (req) => {
     // Interim FS staleness limit: 9 months standard, 12 months for warrant exercise F-forms
     const INTERIM_LIMIT = (isFForm && isWarrantReg) ? TWELVE_MONTHS : NINE_MONTHS;
 
-    // Hoist variables used in both shelf and non-shelf branches AND in subsequent checks
     const effectiveDate = effectiveness.effectDate ? new Date(effectiveness.effectDate) : regDate;
+
+    // Most recent valid prospectus update (424B or effective POS AM) — used to determine
+    // what annuals/interims are IN the live prospectus. Does NOT reset the 9-month clock for domestic.
     const mostRecentEffectiveUpdate = [latestProspectus, latestPostEffective]
       .filter(Boolean)
       .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null;
 
-    let fsStatus, fsDetail;
-    let annualStatus, annualDetail;
+    let fsStatus, fsDetail, fsFailCode;
+    let annualStatus, annualDetail, annualFailCode;
+
+    const annualFormLabel = isFPI ? "20-F" : "10-K";
+    const interimFormLabel = isFPI ? "6-K" : "10-Q";
+    const annualLimitLabel = `${Math.round(ANNUAL_LIMIT/30)}-month`;
+    const interimLimitLabel = `${Math.round(INTERIM_LIMIT/30)}-month`;
+    const ruleRef = isFForm ? "Item 8 of Form 20-F" : "Rule 3-12 / Rule 427";
+    const warrantNote = isWarrantReg ? " (relaxed limits for outstanding transferable warrant exercise)" : "";
 
     if (isShelf) {
       // -------------------------------------------------------------------------
-      // SHELF (S-3/F-3): kept current via automatic IBR of annual/quarterly reports.
-      // Company must be a current Exchange Act filer. Each new annual report auto-incorporates.
+      // SHELF (S-3/F-3): automatic IBR keeps it current.
+      // Each new annual report auto-incorporates into the shelf prospectus.
       // -------------------------------------------------------------------------
-      const annualFormLabel = isFPI ? "20-F" : "10-K";
       if (!latestAnnual) {
         fsStatus = "fail";
-        fsDetail = `STALE — No annual report (${annualFormLabel}) found after this shelf registration. A shelf prospectus is kept current via incorporation by reference of annual reports. Without any ${annualFormLabel} filed after the shelf, there are no financials incorporated by reference. Shelf is NOT usable.`;
+        fsFailCode = "later_filing_not_incorporated";
+        fsDetail = `STALE — No ${annualFormLabel} found after this shelf registration. A shelf prospectus is kept current via IBR of annual reports. Without any ${annualFormLabel} filed after the shelf, there are no financials incorporated by reference. Shelf is NOT usable.`;
       } else {
         const annualDays = daysSince(latestAnnual.date);
         if (annualDays > ANNUAL_LIMIT) {
           fsStatus = "fail";
-          fsDetail = `STALE — ANNUAL FS AGE VIOLATION: Most recent annual report (${latestAnnual.form}, ${latestAnnual.date}) is ${annualDays} days old — exceeds the ${Math.round(ANNUAL_LIMIT/30)}-month limit under ${isFForm ? "Item 8 of Form 20-F" : "Rule 3-12"}. The audited financials incorporated by reference into this shelf are too old. A new ${annualFormLabel} must be filed and incorporated before the shelf can be used.`;
+          fsFailCode = isFForm ? "fpi_audited_financials_older_than_15_or_18_months" : "audited_financials_older_than_16_months";
+          fsDetail = `STALE — ANNUAL FS AGE VIOLATION (${ruleRef}): Most recent ${annualFormLabel} (${latestAnnual.date}) is ${annualDays} days old — exceeds the ${annualLimitLabel} limit${warrantNote}. A new ${annualFormLabel} must be filed before the shelf can be used.`;
         } else {
           fsStatus = "pass";
-          fsDetail = `CURRENT: Shelf is kept current via IBR of ${latestAnnual.form} (${latestAnnual.date}, ${annualDays} days ago). Audited financials are within the ${Math.round(ANNUAL_LIMIT/30)}-month limit under ${isFForm ? "Item 8 of Form 20-F" : "Rule 3-12"}. Prospectus is usable under Section 10(a)(3).`;
+          fsDetail = `CURRENT: Shelf kept current via IBR of ${latestAnnual.form} (${latestAnnual.date}, ${annualDays} days ago). Within ${annualLimitLabel} limit under ${ruleRef}. Prospectus is usable.`;
         }
       }
 
-      annualStatus = fsStatus === "pass" ? "pass" : "fail";
+      annualStatus = fsStatus;
       annualDetail = fsDetail;
+      annualFailCode = fsFailCode;
 
     } else {
       // -------------------------------------------------------------------------
-      // NON-SHELF (S-1/F-1/F-4): Two-step analysis
-      // Domestic: 9-month prospectus staleness + 16-month annual FS outer limit
-      // FPI F-form: 9-month (or 12-month for warrants) interim + 15-month (18-month warrants) annual
-      // NOTE: F-1 IBR is NOT automatic — only if the prospectus expressly elects it under General Instruction VI
+      // NON-SHELF (S-1/F-1/F-4)
+      //
+      // DOMESTIC 9-MONTH CLOCK: Always measured from reg_effective_date.
+      //   A 424B or effective POS AM does NOT reset the 9-month clock.
+      //   After 9 months, the prospectus is stale unless annual FS in the live
+      //   prospectus are within the 16-month hard stop.
+      //
+      // FPI INTERIM CLOCK: Measured from the most recent valid update that
+      //   included interim financials (424B supplement or effective POS AM),
+      //   since the FPI rules test the age of the interim FS themselves,
+      //   not the elapsed time since effectiveness.
+      //
+      // BOTH: The live prospectus baseline (for determining what FS are "in" it)
+      //   is the most recent 424B or effective POS AM (or original effective date).
       // -------------------------------------------------------------------------
 
       const pendingNote = latestPendingPosAm
-        ? ` ⚠ POS AM filed ${latestPendingPosAm.date} has NOT been declared effective (no EFFECT notice) — it does NOT update the live prospectus until the SEC issues effectiveness.`
+        ? ` ⚠ POS AM filed ${latestPendingPosAm.date} has NOT been declared effective (no EFFECT notice) — it does NOT update the live prospectus.`
         : "";
 
-      // --- STEP 1: INTERIM STALENESS TEST ---
-      // Clock runs from original effective date OR most recent valid update, whichever is later.
-      const interimClockBase = mostRecentEffectiveUpdate
-        ? new Date(mostRecentEffectiveUpdate.date)
-        : effectiveDate;
-      const daysSinceInterimClock = Math.floor((new Date() - interimClockBase) / (1000 * 60 * 60 * 24));
-      const interimViolation = daysSinceInterimClock > INTERIM_LIMIT;
-
-      const interimClockLabel = mostRecentEffectiveUpdate
-        ? `${mostRecentEffectiveUpdate.form} filed ${mostRecentEffectiveUpdate.date}`
-        : `original effective date ${interimClockBase.toISOString().split("T")[0]}`;
-
-      // --- STEP 2: ANNUAL FS STALENESS TEST ---
-      // For F-forms WITHOUT express IBR election: the annual FS in the live prospectus
-      // are those that were in the original reg or last declared-effective POS AM.
-      // A 6-K or 20-F filed with the SEC does NOT automatically update an F-1 prospectus
-      // unless IBR was expressly elected in the original registration.
-      // We cannot reliably detect IBR election from EDGAR metadata alone — we flag it as a note.
-
-      // Annuals filed at or before effective date (what was in the reg at effectiveness)
-      const annualsInOriginalReg = annuals.filter(f => new Date(f.date) <= effectiveDate);
-      const annualInOriginalReg = annualsInOriginalReg[0] || null;
-
-      // Most recent effective document (POS AM or 424B that is the live prospectus baseline)
+      // Live prospectus baseline — determines what FS are currently IN the prospectus
       const liveProspectusBaseline = mostRecentEffectiveUpdate;
+      const liveBaselineDate = liveProspectusBaseline ? new Date(liveProspectusBaseline.date) : effectiveDate;
 
-      // Determine: what annual financials are currently IN the live prospectus?
-      let annualInLiveProspectus = null;
-      let annualInLiveProspectusSource = "";
-
-      if (liveProspectusBaseline) {
-        const baselineDate = new Date(liveProspectusBaseline.date);
-        const annualsAtBaseline = annuals.filter(f => new Date(f.date) <= baselineDate);
-        annualInLiveProspectus = annualsAtBaseline[0] || null;
-        annualInLiveProspectusSource = annualInLiveProspectus
-          ? `incorporated via ${liveProspectusBaseline.form} (${liveProspectusBaseline.date})`
-          : `no annual available at baseline date ${liveProspectusBaseline.date}`;
-      } else {
-        annualInLiveProspectus = annualInOriginalReg;
-        annualInLiveProspectusSource = annualInLiveProspectus
-          ? `in original registration effective ${effectiveDate.toISOString().split("T")[0]}`
-          : "no annual found in original registration";
-      }
+      // ANNUAL FS IN LIVE PROSPECTUS
+      // The annual FS in the live prospectus are those available at or before the live baseline date.
+      const annualsAtBaseline = annuals.filter(f => new Date(f.date) <= liveBaselineDate);
+      const annualInLiveProspectus = annualsAtBaseline[0] || null;
+      const annualInLiveProspectusSource = annualInLiveProspectus
+        ? (liveProspectusBaseline
+            ? `incorporated via ${liveProspectusBaseline.form} (${liveProspectusBaseline.date})`
+            : `in original registration effective ${effectiveDate.toISOString().split("T")[0]}`)
+        : "no annual found in original registration";
 
       const annualDaysInLiveProspectus = annualInLiveProspectus ? daysSince(annualInLiveProspectus.date) : null;
       const annualViolation = annualDaysInLiveProspectus !== null && annualDaysInLiveProspectus > ANNUAL_LIMIT;
 
-      // Unincorporated interim reports (10-Qs for domestic; 6-Ks for FPI)
-      // FPIs file 6-Ks — but 6-Ks only update the prospectus if they are expressly incorporated
-      const interimFilings = isFPI
-        ? subsequentFilings.filter(f => f.form === "6-K" || f.form === "6-K/A")
-        : quarterlies;
-      const unincorporatedInterims = liveProspectusBaseline
-        ? interimFilings.filter(f => new Date(f.date) > new Date(liveProspectusBaseline.date))
-        : interimFilings;
+      // A newer annual exists on EDGAR but NOT yet in the live prospectus?
+      const newerAnnualNotIncorporated = latestAnnual && annualInLiveProspectus
+        && latestAnnual.accession !== annualInLiveProspectus.accession;
+      const newerAnnualExists = latestAnnual && (!annualInLiveProspectus || newerAnnualNotIncorporated);
+
+      // DOMESTIC 9-MONTH TEST — clock always from reg_effective_date, never reset by POS AM/424B
+      const daysSinceEffective = Math.floor((new Date() - effectiveDate) / (1000 * 60 * 60 * 24));
+      const domesticNineMonthViolation = !isFForm && daysSinceEffective > NINE_MONTHS;
+
+      // INTERIM STALENESS TEST
+      // For domestic: after 9 months, the Rule 3-12 interim test applies — the live prospectus
+      //   must include FS at least as current as the most recent 10-Q filed on EDGAR.
+      //   A 424B supplement incorporating the 10-Q satisfies this; a bare 10-Q does not.
+      // For FPI: the interim FS in the live prospectus must not be older than INTERIM_LIMIT.
+      //   The relevant date is the date of the most recent interim FS that is in the prospectus,
+      //   i.e., the date of the liveBaselineDate (proxy for when interim FS were last updated).
+      const unincorporatedInterims = isFPI
+        ? subsequentFilings.filter(f => (f.form === "6-K" || f.form === "6-K/A") && new Date(f.date) > liveBaselineDate)
+        : quarterlies.filter(f => new Date(f.date) > liveBaselineDate);
       const unincorporatedCount = unincorporatedInterims.length;
 
-      const interimFormLabel = isFPI ? "6-K" : "10-Q";
-      const annualLimitLabel = `${Math.round(ANNUAL_LIMIT/30)}-month`;
-      const interimLimitLabel = `${Math.round(INTERIM_LIMIT/30)}-month`;
-      const ruleRef = isFForm ? "Item 8 of Form 20-F" : "Rule 3-12";
-      const warrantNote = isWarrantReg ? " (relaxed limit applies for outstanding transferable warrant exercise registrations)" : "";
+      // For FPI, the interim staleness clock runs from liveBaselineDate (date of last valid update)
+      // For domestic, the interim gap is measured by whether unincorporated 10-Qs exist (Rule 3-12)
+      const daysSinceLiveBaseline = Math.floor((new Date() - liveBaselineDate) / (1000 * 60 * 60 * 24));
+      const fpiInterimViolation = isFForm && daysSinceLiveBaseline > INTERIM_LIMIT;
 
-      // --- COMPOSE THE PROSPECTUS CURRENCY STATUS ---
+      // --- COMPOSE PROSPECTUS CURRENCY STATUS ---
       if (!effectiveness.effective) {
         fsStatus = "fail";
+        fsFailCode = "registration_not_effective";
         fsDetail = `Registration statement not yet declared effective — prospectus cannot be used at all.${pendingNote}`;
       } else if (annualViolation) {
         fsStatus = "fail";
-        fsDetail = `STALE — ${ruleRef} ANNUAL FS VIOLATION: The audited annual financials in the live prospectus (${annualInLiveProspectus.form} ${annualInLiveProspectus.date}, ${annualInLiveProspectusSource}) are ${annualDaysInLiveProspectus} days old — exceeding the ${annualLimitLabel} outer limit${warrantNote}. The prospectus CANNOT be used. ${isFForm ? `Note: For F-1/F-4 registrations, later-filed 20-F annual reports do NOT automatically update the live prospectus unless the registration expressly elected IBR under Form 20-F General Instruction VI. ${unincorporatedCount > 0 ? `${unincorporatedCount} ${interimFormLabel}(s) have been filed but are NOT part of the live prospectus unless expressly incorporated.` : ""}` : `Even if interim financials have been filed with the SEC (${unincorporatedCount} unincorporated ${interimFormLabel}(s) on EDGAR), those are NOT part of the live prospectus unless expressly incorporated via a 424B3 supplement or declared-effective POS AM.`} A POS AM with updated AUDITED annual financials must be filed and declared effective.${pendingNote}`;
-      } else if (interimViolation) {
+        fsFailCode = isFForm ? "fpi_audited_financials_older_than_15_or_18_months" : "audited_financials_older_than_16_months";
+        fsDetail = `STALE — ${ruleRef} ANNUAL FS VIOLATION: Audited annual financials in the live prospectus (${annualInLiveProspectus.form} ${annualInLiveProspectus.date}, ${annualInLiveProspectusSource}) are ${annualDaysInLiveProspectus} days old — exceeding the ${annualLimitLabel} outer limit${warrantNote}. ${isFForm ? `For F-1/F-4, later-filed 20-Fs do NOT auto-update the prospectus unless IBR was elected under Form 20-F General Instruction VI. ` : ""}A POS AM with updated audited annual financials must be declared effective.${pendingNote}`;
+      } else if (fpiInterimViolation) {
+        fsStatus = "fail";
+        fsFailCode = "fpi_interim_financials_older_than_9_or_12_months";
         const projectedAnnualExpiry = annualInLiveProspectus
           ? new Date(new Date(annualInLiveProspectus.date).getTime() + ANNUAL_LIMIT * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
           : "unknown";
+        fsDetail = `STALE — ${ruleRef} FPI INTERIM STALENESS: Live prospectus last updated ${daysSinceLiveBaseline} days ago (${liveProspectusBaseline ? `${liveProspectusBaseline.form} ${liveProspectusBaseline.date}` : `effective date ${effectiveDate.toISOString().split("T")[0]}`}) — exceeds the ${interimLimitLabel} interim FS limit${warrantNote}. For F-1/F-4, the clock resets only via a valid 424B supplement or declared-effective POS AM — NOT by filing a 6-K unless expressly incorporated. Annual FS expire around ${projectedAnnualExpiry}.${pendingNote}`;
+      } else if (domesticNineMonthViolation && unincorporatedCount > 0) {
+        // After 9 months, Rule 3-12 requires the live prospectus to be as current as the latest 10-Q
         fsStatus = "fail";
-        fsDetail = `STALE — ${ruleRef} INTERIM STALENESS VIOLATION: The live prospectus has not been updated in ${daysSinceInterimClock} days (clock running from ${interimClockLabel}) — exceeding the ${interimLimitLabel} limit${warrantNote}. The prospectus CANNOT be used. ${isFForm ? `For F-1/F-4 registrations, the clock is reset only by a valid 424B supplement or declared-effective POS AM — NOT by filing a ${interimFormLabel} with the SEC unless expressly incorporated.` : `10-Q filings alone do not update the prospectus.`} The audited annual financials (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) would expire around ${projectedAnnualExpiry} under the ${annualLimitLabel} annual limit.${pendingNote}`;
-      } else {
-        if (unincorporatedCount > 0) {
+        fsFailCode = "later_filing_not_incorporated";
+        fsDetail = `STALE — Rule 3-12 INTERIM GAP: Registration is ${daysSinceEffective} days past effective date (${effectiveDate.toISOString().split("T")[0]}) — beyond the 9-month window. ${unincorporatedCount} 10-Q(s) have been filed with the SEC since the last prospectus update but are NOT incorporated into the live prospectus. Under Rule 3-12, the live prospectus must include financials at least as current as the most recently filed 10-Q. A 424B3 supplement incorporating the latest 10-Q or a declared-effective POS AM is required.${pendingNote}`;
+      } else if (!isFForm && domesticNineMonthViolation) {
+        // Beyond 9 months, but no unincorporated 10-Qs — check annual FS age
+        if (annualDaysInLiveProspectus !== null && annualDaysInLiveProspectus <= ANNUAL_LIMIT) {
           fsStatus = "warn";
-          fsDetail = `INTERIM UPDATE GAP — Prospectus is within the ${interimLimitLabel} interim window (${daysSinceInterimClock} days since ${interimClockLabel}), but ${unincorporatedCount} subsequent ${interimFormLabel}(s) have been filed with the SEC and are NOT expressly incorporated into the live prospectus. ${isFForm ? `For F-1/F-4 registrations, 6-K filings do NOT automatically update the prospectus — a 424B3 supplement or declared-effective POS AM is required.` : `A 424B3 supplement or declared-effective POS AM is required to incorporate them.`} Audited annuals in the live prospectus (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) have ${annualDaysInLiveProspectus !== null ? ANNUAL_LIMIT - annualDaysInLiveProspectus : "?"} days before the ${annualLimitLabel} outer limit.${pendingNote}`;
+          fsDetail = `APPROACHING LIMIT — Beyond 9 months since effectiveness (${daysSinceEffective} days). No unincorporated 10-Qs detected. Audited annual FS in the live prospectus (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) are ${annualDaysInLiveProspectus} days old — ${ANNUAL_LIMIT - annualDaysInLiveProspectus} days remaining before the ${annualLimitLabel} hard stop. Monitor closely.${pendingNote}`;
         } else {
           fsStatus = "pass";
-          fsDetail = `CURRENT: Prospectus is within the ${interimLimitLabel} interim window (${daysSinceInterimClock} days since ${interimClockLabel}). Audited annuals in the live prospectus (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}) are ${annualDaysInLiveProspectus} days old — within the ${annualLimitLabel} limit under ${ruleRef}${warrantNote}. Prospectus is usable.${pendingNote}`;
+          fsDetail = `CURRENT: Beyond 9 months since effectiveness but no interim update gap detected. Audited annuals (${annualInLiveProspectus?.form || "none"} ${annualInLiveProspectus?.date || ""}) are within the ${annualLimitLabel} limit.${pendingNote}`;
         }
+      } else if (unincorporatedCount > 0) {
+        // Within interim window but unincorporated interims exist — flag as warning
+        fsStatus = "warn";
+        fsFailCode = "later_filing_not_incorporated";
+        fsDetail = `INTERIM GAP — ${unincorporatedCount} ${interimFormLabel}(s) filed with the SEC after the last valid prospectus update (${liveProspectusBaseline ? `${liveProspectusBaseline.form} ${liveProspectusBaseline.date}` : effectiveDate.toISOString().split("T")[0]}) are NOT part of the live prospectus. ${isFForm ? `For F-1/F-4, 6-Ks do NOT auto-update the prospectus — a 424B3 or declared-effective POS AM is required.` : `A 424B3 supplement or declared-effective POS AM is required.`} Annuals in live prospectus have ${annualDaysInLiveProspectus !== null ? ANNUAL_LIMIT - annualDaysInLiveProspectus : "?"} days before the ${annualLimitLabel} outer limit.${pendingNote}`;
+      } else {
+        fsStatus = "pass";
+        fsDetail = `CURRENT: Live prospectus is up to date. ${liveProspectusBaseline ? `Last valid update: ${liveProspectusBaseline.form} (${liveProspectusBaseline.date}).` : `No subsequent update — original registration effective ${effectiveDate.toISOString().split("T")[0]}.`} Audited annuals (${annualInLiveProspectus?.form || "none"} ${annualInLiveProspectus?.date || ""}) are ${annualDaysInLiveProspectus ?? "?"} days old — within ${annualLimitLabel} limit. No unincorporated interim reports.${pendingNote}`;
       }
 
-      // Annual status check — separate check for annual filing currency
-      const annualFormLabel = isFPI ? "20-F" : "10-K";
+      // ANNUAL STATUS — separate check: is there a newer annual not yet in the prospectus?
       if (!latestAnnual) {
         annualStatus = "info";
         annualDetail = `No ${annualFormLabel} filed after this registration statement. If the offering is ongoing, the prospectus cannot be updated with new annual financials until a ${annualFormLabel} is filed.`;
+      } else if (annualViolation) {
+        annualStatus = "fail";
+        annualFailCode = fsFailCode;
+        annualDetail = `Audited annual FS in the live prospectus (${annualInLiveProspectus?.form} ${annualInLiveProspectus?.date}, ${annualInLiveProspectusSource}) are ${annualDaysInLiveProspectus} days old — exceeds the ${annualLimitLabel} limit under ${ruleRef}${warrantNote}.`;
+      } else if (newerAnnualExists) {
+        annualStatus = "warn";
+        annualFailCode = "later_filing_not_incorporated";
+        annualDetail = `A more recent ${annualFormLabel} (${latestAnnual.form}, ${latestAnnual.date}) has been filed with the SEC but is NOT part of the live prospectus. ${isFForm ? `For F-1/F-4, a later-filed 20-F does NOT auto-incorporate unless the prospectus expressly elected IBR under Form 20-F General Instruction VI. ` : ""}To update: file a 424B3 supplement or a declared-effective POS AM.`;
       } else {
         const annualDays = daysSince(latestAnnual.date);
-        const latestAnnualInProspectus = annualInLiveProspectus && annualInLiveProspectus.accession === latestAnnual.accession;
-        if (latestAnnualInProspectus) {
-          annualStatus = annualDays <= ANNUAL_LIMIT ? "pass" : "fail";
-          annualDetail = annualStatus === "pass"
-            ? `Most recent ${annualFormLabel} (${latestAnnual.date}, ${annualDays} days ago) is incorporated into the live prospectus (${annualInLiveProspectusSource}). Annual financials are within the ${annualLimitLabel} limit.`
-            : `Most recent ${annualFormLabel} (${latestAnnual.date}, ${annualDays} days ago) has exceeded the ${annualLimitLabel} annual FS age limit.`;
-        } else {
-          annualStatus = "warn";
-          annualDetail = `A more recent ${annualFormLabel} (${latestAnnual.form}, ${latestAnnual.date}) has been filed with the SEC but is NOT part of the live prospectus. The live prospectus still contains the older annual financials (${annualInLiveProspectus?.form || "unknown"} ${annualInLiveProspectus?.date || ""}). ${isFForm ? `For F-1/F-4 registrations, a later-filed 20-F does NOT auto-incorporate unless the prospectus expressly elected IBR under Form 20-F General Instruction VI.` : ""} To update: file a 424B3 supplement or a POS AM (must be declared effective) that expressly incorporates the new ${annualFormLabel}.`;
-        }
+        annualStatus = "pass";
+        annualDetail = `Most recent ${annualFormLabel} (${latestAnnual.date}, ${annualDays} days ago) is in the live prospectus (${annualInLiveProspectusSource}). Within ${annualLimitLabel} limit.`;
       }
     }
 
@@ -456,8 +480,9 @@ Deno.serve(async (req) => {
       id: "financial_statements",
       label: isFForm
         ? `Prospectus Currency — Item 8 Form 20-F (${Math.round(ANNUAL_LIMIT/30)}-mo annual / ${Math.round(INTERIM_LIMIT/30)}-mo interim)`
-        : "Prospectus Currency — Section 10(a)(3) / Rule 427",
+        : "Prospectus Currency — Rule 3-12 / Rule 427 (9-mo interim / 16-mo annual)",
       status: fsStatus,
+      failCode: fsFailCode || null,
       detail: fsDetail,
       filingDate: latestPostEffective?.date || latestProspectus?.date || null,
       filingUrl: edgarUrl(latestPostEffective || latestProspectus),
@@ -467,9 +492,10 @@ Deno.serve(async (req) => {
     checks.push({
       id: "annual_reports",
       label: isFPI
-        ? `Annual Financials In Live Prospectus (${Math.round(ANNUAL_LIMIT/30)}-Month Limit — Form 20-F)`
-        : `Annual Financials In Live Prospectus (16-Month Rule 3-12 Limit)`,
+        ? `Annual Financials In Live Prospectus (${Math.round(ANNUAL_LIMIT/30)}-Month Limit — ${ruleRef})`
+        : `Annual Financials In Live Prospectus (16-Month Rule 3-12 Hard Stop)`,
       status: annualStatus,
+      failCode: annualFailCode || null,
       detail: annualDetail,
       filingDate: latestAnnual?.date || null,
       filingUrl: edgarUrl(latestAnnual),
@@ -633,14 +659,17 @@ Deno.serve(async (req) => {
     // AI plain-English verdict
     const checkSummary = checks.map(c => `[${c.status.toUpperCase()}] ${c.label}: ${c.detail}`).join("\n");
 
-    const fpiFrameworkNote = isFForm
-      ? `This is an FPI filing on an F-form (${selectedReg.form}). The governing rules are Item 8 of Form 20-F, NOT the domestic 9-month/16-month framework. Annual FS limit: ${Math.round(ANNUAL_LIMIT/30)} months${isWarrantReg ? " (18-month relaxation for outstanding transferable warrant exercise registrations)" : ""}. Interim FS limit: ${Math.round(INTERIM_LIMIT/30)} months. IBR on F-1/F-4 is NOT automatic — only if the prospectus expressly elected it under General Instruction VI of Form 20-F. FPIs file 20-F (not 10-K) and 6-K (not 10-Q or 8-K).`
-      : `Domestic issuer framework: Section 10(a)(3) / Rule 427 — 9-month interim staleness / 16-month annual FS outer limit.`;
+    const frameworkNote = isFForm
+      ? `F-form (${selectedReg.form}) — governed by Item 8 of Form 20-F. Annual FS limit: ${Math.round(ANNUAL_LIMIT/30)} months${isWarrantReg ? " (18-month relaxation for warrant exercise)" : ""}. Interim FS limit: ${Math.round(INTERIM_LIMIT/30)} months. IBR on F-1/F-4 is NOT automatic — only if expressly elected under General Instruction VI. FPIs file 20-F (not 10-K) and furnish 6-K (not 10-Q/8-K). A 6-K does NOT update the prospectus unless expressly incorporated.`
+      : `Domestic form (${selectedReg.form}) — Rule 3-12 / Rule 427. The 9-month clock runs from reg_effective_date ONLY — it is NEVER reset by a POS AM or 424B supplement. After 9 months, the prospectus may still be used IF: (a) the audited annual FS in the live prospectus are within 16 months AND (b) the live prospectus includes FS at least as current as the most recently filed 10-Q. A bare 10-Q filing does NOT update the prospectus — a 424B3 supplement or declared-effective POS AM is required.`;
 
     const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt: `You are a securities law compliance expert.
+      prompt: `You are a securities law compliance expert applying SEC registration statement currency rules.
 
-${fpiFrameworkNote}
+Framework: ${frameworkNote}
+
+CURRENT = effective AND live prospectus validly updated AND interim age rule satisfied AND audited annual age rule satisfied.
+Failure codes: registration_not_effective | later_filing_not_incorporated | interim_financials_outdated | audited_financials_older_than_16_months | fpi_audited_financials_older_than_15_or_18_months | fpi_interim_financials_older_than_9_or_12_months
 
 Company: ${companyName} (${ticker.toUpperCase()})
 Form: ${selectedReg.form} filed ${selectedReg.date}
@@ -649,7 +678,7 @@ Type: ${isShelf ? "Shelf" : "Non-Shelf"} | FPI: ${isFPI ? "Yes" : "No"} | F-form
 Compliance checks:
 ${checkSummary}
 
-Give a direct answer (2-3 sentences): Can this registration be used TODAY for offers/sales? What is the single most critical reason? What must be done to cure it?`,
+Provide a direct 2-3 sentence verdict: is this registration CURRENT or NOT CURRENT today? State the first/primary failure reason code if not current. What must be done to cure it?`,
       response_json_schema: {
         type: "object",
         properties: {
