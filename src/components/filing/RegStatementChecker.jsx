@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import RegStatementChat from "./RegStatementChat";
 import { base44 } from "@/api/base44Client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -258,6 +259,9 @@ export default function RegStatementChecker() {
           <p className="text-xs text-muted-foreground text-right">
             Checked {new Date(detailResult.checkedAt).toLocaleString()}
           </p>
+
+          {/* AI Follow-Up Chat */}
+          <RegStatementChat detailResult={detailResult} />
         </div>
       )}
     </div>
