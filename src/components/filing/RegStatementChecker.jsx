@@ -170,7 +170,7 @@ export default function RegStatementChecker() {
                 className="w-full flex items-center justify-between bg-background border border-border rounded-lg px-4 py-3 hover:border-accent/50 hover:bg-muted/40 transition-all text-left group"
               >
                 <div className="flex items-center gap-3">
-                  <FileText className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
+                  <FileText className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors flex-shrink-0" />
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge variant="secondary" className="text-xs">{reg.form}</Badge>
@@ -184,8 +184,10 @@ export default function RegStatementChecker() {
                       {reg.effective === true && (
                         <Badge className="text-xs border-0 bg-emerald-100 text-emerald-700">Effective</Badge>
                       )}
-
                     </div>
+                    {reg.subject && (
+                      <p className="text-xs text-foreground/80 mt-0.5 font-medium">{reg.subject}</p>
+                    )}
                     <p className="text-xs text-muted-foreground mt-0.5">{reg.daysOld} days ago{reg.effectDate ? ` · Effective ${reg.effectDate}` : ""}</p>
                   </div>
                 </div>

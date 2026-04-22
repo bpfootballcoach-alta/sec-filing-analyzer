@@ -75,9 +75,10 @@ Deno.serve(async (req) => {
       const accessions = page.accessionNumber || [];
       const docs = page.primaryDocument || [];
       const fileNumbers = page.fileNumber || [];
+      const descriptions = page.primaryDocDescription || [];
       for (let i = 0; i < forms.length; i++) {
         if (forms[i] && dates[i]) {
-          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik, fileNumber: fileNumbers[i] || null });
+          acc.push({ form: forms[i], date: dates[i], accession: accessions[i], doc: docs[i], cik, fileNumber: fileNumbers[i] || null, description: descriptions[i] || null });
         }
       }
       return acc;
@@ -175,12 +176,38 @@ Deno.serve(async (req) => {
     });
 
     if (!accession) {
+      // Generate a short subject summary for each reg filing using LLM
+      const regFilingsWithMeta = regFilings.map((f) => ({
+        form: f.form,
+        date: f.date,
+        accession: f.accession,
+        description: f.description || "",
+      }));
+
+      const subjectSummaries = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: `For each of the following SEC registration statement filings by ${companyName} (ticker: ${ticker.toUpperCase()}), write a concise 1-sentence subject summary (10-20 words) describing what is being registered — e.g. "IPO of 5,000,000 shares of common stock" or "Resale of shares issued in merger with XYZ Corp." or "Employee stock option plan covering up to 10,000,000 shares". Use the form type and any description clues provided. If it's an amendment (/A), note that. Return a JSON array in the same order as the input.
+
+Filings:
+${regFilingsWithMeta.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description hint: "${f.description}"`).join("\n")}`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            summaries: {
+              type: "array",
+              items: { type: "string" }
+            }
+          }
+        }
+      });
+
+      const summaryList = subjectSummaries?.summaries || [];
+
       return Response.json({
         mode: "list",
         ticker: ticker.toUpperCase(),
         cik,
         companyName,
-        registrationStatements: regFilings.map((f) => {
+        registrationStatements: regFilings.map((f, i) => {
           const effectiveness = isLikelyEffective(f);
           return {
             form: f.form,
@@ -193,6 +220,7 @@ Deno.serve(async (req) => {
             effectiveReason: effectiveness.reason,
             effectDate: effectiveness.effectDate || null,
             registrationNumber: f.fileNumber || null,
+            subject: summaryList[i] || null,
           };
         }),
       });
