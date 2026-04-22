@@ -537,24 +537,29 @@ ${feeText.slice(0, 6000)}`,
       const liveBaselineDate = liveProspectusBaseline ? new Date(liveProspectusBaseline.date) : effectiveDate;
 
       // ANNUAL FS IN LIVE PROSPECTUS
-      // For non-shelf F-1/F-4: a 424B3 supplement does NOT prove it incorporated a 20-F.
-      // Only a declared-effective POS AM can pull in a newer annual for a non-shelf registration.
-      // Therefore, the annual FS baseline is:
-      //   - the most recent annual at or before the last EFFECTIVE POS AM date (if any), OR
-      //   - the most recent annual at or before the effectiveness date (original reg)
-      // A bare 424B3 does NOT advance the annual FS baseline for non-shelf registrations.
+      // The live prospectus baseline determines what annuals are "in" it.
+      // For non-shelf (F-1/F-4): 424B3 supplements and effective POS AMs both count as updates.
+      // But we require the annual to be plausibly incorporated: filed within 90 days before the update.
       const allAnnuals = filings.filter(f =>
         f.form === "10-K" || f.form === "20-F" || f.form === "10-K/A" || f.form === "20-F/A"
       );
-      // Annual baseline: last effective POS AM date, or reg effectiveness date — NOT 424B date
-      const annualBaselineDate = latestPostEffective
-        ? new Date(latestPostEffective.date)
-        : effectiveDate;
+      const annualBaselineDate = liveProspectusBaseline ? new Date(liveProspectusBaseline.date) : effectiveDate;
       const annualsAtBaseline = allAnnuals.filter(f => new Date(f.date) <= annualBaselineDate);
-      const annualInLiveProspectus = annualsAtBaseline[0] || null;
+      let annualInLiveProspectus = annualsAtBaseline[0] || null;
+      // SANITY CHECK: For non-shelf, if using a 424B as the baseline, the annual must be filed within 90 days before the 424B.
+      // This prevents false incorporation claims for unrelated 424Bs filed long after an old annual.
+      if (!isShelf && latestProspectus && !latestPostEffective && annualInLiveProspectus) {
+        const prospectusDate = new Date(latestProspectus.date);
+        const annualDate = new Date(annualInLiveProspectus.date);
+        const daysBetween = Math.floor((prospectusDate - annualDate) / (1000 * 60 * 60 * 24));
+        if (daysBetween > 90) {
+          // 424B is too far from the annual — don't credit it with incorporating the annual
+          annualInLiveProspectus = null;
+        }
+      }
       const annualInLiveProspectusSource = annualInLiveProspectus
-        ? (latestPostEffective
-            ? `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (prospectus updated via effective POS AM ${latestPostEffective.date})`
+        ? (liveProspectusBaseline
+            ? `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (prospectus last updated via ${liveProspectusBaseline.form} ${liveProspectusBaseline.date})`
             : `${annualInLiveProspectus.form} filed ${annualInLiveProspectus.date} (in original registration effective ${effectiveDate.toISOString().split("T")[0]})`)
         : "no annual found in original registration";
 
