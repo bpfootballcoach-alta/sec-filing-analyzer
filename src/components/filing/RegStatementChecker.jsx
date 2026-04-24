@@ -122,9 +122,7 @@ export default function RegStatementChecker() {
   };
 
   const overallCfg = detailResult
-    ? (detailResult.registration.isTransactionReg
-        ? VERDICT_CONFIG.transaction
-        : (VERDICT_CONFIG[detailResult.overallStatus] || VERDICT_CONFIG.warn))
+    ? (VERDICT_CONFIG[detailResult.overallStatus] || VERDICT_CONFIG.warn)
     : null;
 
   return (

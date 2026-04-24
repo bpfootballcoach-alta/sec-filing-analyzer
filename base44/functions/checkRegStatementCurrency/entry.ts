@@ -625,7 +625,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       return Response.json({
         mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
         registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
-          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isWarrantReg,
+          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
           annualLimitMonths: 16, interimLimitMonths: Math.round(RULE_312_DAYS_OTHERS / 30),
           securitiesRegistered: securitiesRegistered || null },
         overallStatus,
