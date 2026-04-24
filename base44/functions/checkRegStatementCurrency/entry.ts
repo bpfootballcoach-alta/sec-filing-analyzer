@@ -345,8 +345,21 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
 7. SPECIFIC_INTERIM_INCORPORATED: Period-end (YYYY-MM-DD) of specifically named 10-Q/6-K, else null.
 8. SPECIFIC_DOCS_LIST: Array of Exchange Act reports in a true IBR section. Empty array if only exhibit cross-references.
 9. IBR_SUMMARY: 1-2 sentence factual summary. If no true IBR section: "No dedicated Incorporation by Reference section found. The document only contains standard exhibit cross-references."
-10. IS_ONGOING_OFFERING: (true/false) Is the prospectus for an ONGOING offering where the prospectus will CONTINUE to be used AFTER the initial transaction closes? Examples that ARE ongoing: warrant exercise offers, continuous resale by selling shareholders, employee benefit plan registrations. Examples that are NOT ongoing (one-time transaction): a merger vote proxy/prospectus where securities are issued solely as merger consideration and there is no continuing offer after the merger closes. Base this on the cover page and plan of distribution language.
-11. ONGOING_OFFERING_REASON: 1 sentence explaining why you concluded IS_ONGOING_OFFERING is true or false.
+10. IS_ONGOING_OFFERING: (true/false) Is the prospectus for an ONGOING offering where the prospectus will CONTINUE to be used AFTER the initial transaction closes?
+
+CRITICAL RULE — default to TRUE (ongoing) unless ALL of the following are satisfied:
+  (a) The ONLY securities registered are merger consideration shares (common stock/cash issued as merger consideration in a business combination vote), AND
+  (b) There are NO warrants registered (whether public warrants, private placement warrants, or any shares issuable upon warrant exercise), AND
+  (c) There is NO resale component (no selling shareholders, no resale by holders), AND
+  (d) The document does NOT contain undertakings to file post-effective amendments for Section 10(a)(3) purposes (which would only appear if there is an ongoing offering requiring prospectus currency), AND
+  (e) The warrant agreement (if any) does NOT require maintaining an effective registration statement and current prospectus post-merger.
+
+If ANY warrants or warrant shares are registered, IS_ONGOING_OFFERING MUST be true. A SPAC or merger S-4/F-4 that also registers warrant shares or covers warrant exercises is NOT a pure one-time transaction document — the warrant exercise component is an ongoing Securities Act use case post-merger.
+
+Examples that ARE ongoing (return true): warrant exercise offers, continuous resale, employee benefit plans, ANY S-4/F-4 that also registers warrants or warrant shares.
+Examples that are NOT ongoing (return false ONLY if ALL five conditions above are satisfied): a pure merger vote proxy/prospectus where ONLY merger consideration shares are issued and there are no warrants, no resale, no ongoing offering of any kind.
+
+11. ONGOING_OFFERING_REASON: 1-2 sentences explaining exactly why you concluded IS_ONGOING_OFFERING is true or false, citing the specific securities registered and any warrant or resale component found.
 
 Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE / OFFERING TYPE CONTEXT:\n${offeringSnippet.slice(0, 3000)}`,
             response_json_schema: {
@@ -387,9 +400,16 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE / OFFERING TY
     // or an ongoing offering (warrant exercises, resale, etc.) where Section 10(a)(3) applies.
     // Section 10(a)(3) only triggers "when a prospectus is used" — if no prospectus is being
     // actively used for ongoing offers, the obligation does not arise.
-    // We use the LLM's is_ongoing_offering determination from reading the actual document.
-    // If we couldn't read the document, conservatively assume it IS ongoing for S-4/F-4.
-    const isTransactionReg = isSorFFourBase && (
+    //
+    // ADDITIONAL HARD CHECK: If the fee table shows warrants or warrant shares registered,
+    // it is definitively an ongoing offering — override the LLM determination.
+    const feeTableHasWarrants = securitiesRegistered?.securities?.some(s => {
+      const cls = (s.security_class || "").toLowerCase();
+      return cls.includes("warrant") || cls.includes("warrant share") || cls.includes("underlying");
+    }) || (securitiesRegistered?.label || "").toLowerCase().includes("warrant")
+      || (securitiesRegistered?.summary || "").toLowerCase().includes("warrant");
+
+    const isTransactionReg = isSorFFourBase && !feeTableHasWarrants && (
       regIBRInfo !== null
         ? regIBRInfo.is_ongoing_offering === false  // LLM confirmed: not an ongoing offering
         : false  // couldn't read doc — assume ongoing to be conservative
@@ -727,7 +747,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         id: "transaction_reg_note",
         label: "One-Time Transaction Registration (S-4/F-4) — No Ongoing Prospectus Use",
         status: "info",
-        detail: `Section 10(a)(3) of the Securities Act only applies "when a prospectus is used" for ongoing offers. Based on review of the registration document: ${ongoingReason} Since no prospectus is being actively used for ongoing offers, Section 10(a)(3) currency obligations do not arise. If this registration also covers warrants being exercised on an ongoing basis or an ongoing resale, a separate Section 10(a)(3) analysis would apply to that prospectus.`,
+        detail: `Section 10(a)(3) of the Securities Act only applies "when a prospectus is used" for ongoing offers. Based on review of the registration document, this appears to be a pure one-time business combination transaction with no warrants, resale component, or other ongoing Securities Act use: ${ongoingReason} The registration document was reviewed for: (1) warrants or warrant shares in the fee table, (2) resale/selling shareholder components, (3) Section 10(a)(3) undertakings, and (4) ongoing offering language. None were found. If the governing warrant agreement separately requires maintaining an effective registration statement post-merger for warrant exercises, that obligation would apply to that prospectus and should be analyzed separately.`,
         filingDate: null, filingUrl: edgarUrl(selectedReg), filingForm: selectedReg.form,
       });
       const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
