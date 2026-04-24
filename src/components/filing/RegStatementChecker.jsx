@@ -23,6 +23,7 @@ const VERDICT_CONFIG = {
   pass: { icon: ShieldCheck, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-300", badge: "bg-emerald-600 text-white", label: "REGISTRATION IS CURRENT" },
   warn: { icon: ShieldAlert, color: "text-amber-700", bg: "bg-amber-50 border-amber-300", badge: "bg-amber-500 text-white", label: "ISSUES REQUIRE REVIEW" },
   fail: { icon: ShieldX, color: "text-red-700", bg: "bg-red-50 border-red-300", badge: "bg-red-600 text-white", label: "REGISTRATION IS NOT CURRENT" },
+  transaction: { icon: Info, color: "text-blue-700", bg: "bg-blue-50 border-blue-300", badge: "bg-blue-600 text-white", label: "COMPLETED TRANSACTION — NO ONGOING CURRENCY OBLIGATION" },
 };
 
 function CheckRow({ check }) {
@@ -120,7 +121,11 @@ export default function RegStatementChecker() {
     setSelectedReg(null);
   };
 
-  const overallCfg = detailResult ? (VERDICT_CONFIG[detailResult.overallStatus] || VERDICT_CONFIG.warn) : null;
+  const overallCfg = detailResult
+    ? (detailResult.registration.isTransactionReg
+        ? VERDICT_CONFIG.transaction
+        : (VERDICT_CONFIG[detailResult.overallStatus] || VERDICT_CONFIG.warn))
+    : null;
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 space-y-5">

@@ -226,6 +226,12 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     const isShelf = regType.includes("S-3") || regType.includes("F-3");
     const isFForm = regType.startsWith("F-");
     const isWarrantReg = isFForm && regType.includes("F-4");
+    // S-4 and F-4 are transaction registrations (mergers/business combinations).
+    // Once the transaction is complete, these registrations are no longer used for
+    // ongoing offers — Section 10(a)(3) prospectus currency obligations do not apply
+    // to a completed transaction S-4/F-4. Only warrant exercise S-4s (isWarrantReg)
+    // or those with ongoing resale obligations need currency monitoring.
+    const isTransactionReg = (regType === "S-4" || regType === "S-4/A" || regType === "F-4" || regType === "F-4/A") && !isWarrantReg;
 
     const has20F = filings.some(f => f.form === "20-F" || f.form === "20-F/A");
     const has10K = filings.some(f => f.form === "10-K");
@@ -607,6 +613,34 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       detail: `Registration effective per ${effectiveness.reason}. Applying Section 10(a)(3) / Item 512 post-effectiveness currency analysis.`,
       filingDate: effectiveness.effectDate || null, filingUrl: null, filingForm: null,
     });
+
+    // ── Transaction registrations (S-4/F-4 mergers) — short-circuit ──────────
+    // S-4 and F-4 registrations cover one-time business combination transactions.
+    // Once the merger/transaction is complete, the prospectus is no longer used for
+    // ongoing offers and Section 10(a)(3) ongoing currency obligations do not apply.
+    // The registration does not need to be "kept current" like a continuous offering.
+    if (isTransactionReg) {
+      checks.push({
+        id: "transaction_reg_note",
+        label: "Transaction Registration (S-4/F-4) — Currency Analysis Not Applicable",
+        status: "info",
+        detail: `This is an S-4/F-4 transaction registration used for a business combination (merger/acquisition). Once the transaction is consummated, the registration is not used for ongoing offers and Section 10(a)(3) prospectus currency obligations do not apply. No ongoing update requirement exists for a completed transaction registration. If warrants were registered and are being exercised on an ongoing basis, a separate analysis under the warrant exercise prospectus would apply.`,
+        filingDate: null, filingUrl: edgarUrl(selectedReg), filingForm: selectedReg.form,
+      });
+      const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: `Securities law expert. This is an S-4/F-4 transaction registration for a business combination by ${companyName} (${ticker.toUpperCase()}), filed ${selectedReg.date}, effective ${effectiveness.effectDate}. The transaction has been completed. The verdict MUST be "CURRENT" because completed transaction registrations are not subject to Section 10(a)(3) ongoing prospectus currency obligations. Briefly explain in 1-2 sentences why Section 10(a)(3) does not apply and what, if anything, the company should monitor going forward (e.g. warrant exercise prospectus if warrants are outstanding).`,
+        response_json_schema: { type: "object", properties: { verdict: { type: "string", enum: ["CURRENT", "NOT CURRENT", "UNCERTAIN"] }, summary: { type: "string" }, key_issue: { type: "string" }, required_action: { type: "string" } } }
+      });
+      return Response.json({
+        mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
+        registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
+          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isWarrantReg, isTransactionReg: true,
+          annualLimitMonths: null, interimLimitMonths: null,
+          securitiesRegistered: securitiesRegistered || null },
+        overallStatus: "pass", stage: "post_effective", applicableRule: "N/A — Completed Transaction Registration",
+        aiSummary: aiSummary || null, checks, checkedAt: new Date().toISOString(),
+      });
+    }
 
     // ── CHECK: IBR status of the registration document ──────────────────────
     // Surface whether the registration statement itself contains IBR language,
