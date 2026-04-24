@@ -225,13 +225,12 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     const regType = selectedReg.form?.toUpperCase();
     const isShelf = regType.includes("S-3") || regType.includes("F-3");
     const isFForm = regType.startsWith("F-");
-    const isWarrantReg = isFForm && regType.includes("F-4");
-    // S-4 and F-4 are transaction registrations (mergers/business combinations).
-    // Once the transaction is complete, these registrations are no longer used for
-    // ongoing offers — Section 10(a)(3) prospectus currency obligations do not apply
-    // to a completed transaction S-4/F-4. Only warrant exercise S-4s (isWarrantReg)
-    // or those with ongoing resale obligations need currency monitoring.
-    const isTransactionReg = (regType === "S-4" || regType === "S-4/A" || regType === "F-4" || regType === "F-4/A") && !isWarrantReg;
+    // S-4/F-4 MAY be transaction registrations (mergers) where the prospectus is no longer
+    // being "used" once the transaction closes — Section 10(a)(3) only applies "when a
+    // prospectus is used" (15 U.S.C. § 77j(a)(3)). But some S-4/F-4s register warrants
+    // or resale securities that ARE continuously offered. We must check the actual document
+    // before short-circuiting. isTransactionReg is determined after IBR/document analysis below.
+    const isSorFFourBase = (regType === "S-4" || regType === "S-4/A" || regType === "F-4" || regType === "F-4/A");
 
     const has20F = filings.some(f => f.form === "20-F" || f.form === "20-F/A");
     const has10K = filings.some(f => f.form === "10-K");
@@ -272,10 +271,8 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     const SECTION_10A3_18_MONTHS = 548; // F-4 warrant exercise relaxation
     const SECTION_10A3_9_MONTHS = 274;
 
-    // Post-effective annual FS age cap
-    const ANNUAL_LIMIT = isFForm
-      ? (isWarrantReg ? SECTION_10A3_18_MONTHS : SECTION_10A3_15_MONTHS)
-      : SECTION_10A3_16_MONTHS;
+    // Post-effective annual FS age cap (warrant-exercise F-4s get 18-month relaxation)
+    const ANNUAL_LIMIT = isFForm ? SECTION_10A3_15_MONTHS : SECTION_10A3_16_MONTHS;
 
     const annualFormLabel = isFPI ? "20-F" : "10-K";
     const interimFormLabel = isFPI ? "6-K" : "10-Q";
@@ -327,29 +324,31 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
             ? `EXTRACTED IBR-RELEVANT SECTIONS (found by keyword search):\n${ibrSnippet.slice(0, 12000)}\n\nDOCUMENT TAIL (last portion):\n${tailText}`
             : `No IBR keyword found in document. Document tail:\n${tailText}`;
 
+          // Also search for offering type indicators in a broader slice of the document
+          // to determine if this is a one-time transaction or an ongoing offering
+          const offeringSnippet = plainText.slice(0, 5000) + "\n\n" + plainText.slice(-3000);
+
           const ibr = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `You are reviewing extracted sections of an SEC registration statement that were found by searching for "incorporation by reference" keywords. Based ONLY on what you see below, determine:
+            prompt: `You are reviewing extracted sections of an SEC registration statement. Determine:
 
-1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section (a section with that heading that lists Exchange Act reports incorporated into this registration)? (true/false).
-   CRITICAL DISTINCTIONS — these do NOT count as an IBR section:
-   - Exhibit cross-references like "incorporated by reference to Exhibit 3.1 of Form S-1" (these are just exhibit citations)
-   - Item 512 undertakings boilerplate about post-effective amendments
-   - Generic phrases "where you can find more information" that just point to EDGAR search
-   - XBRL metadata or cover page boilerplate
+1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section listing Exchange Act reports? (true/false)
+   These do NOT count: exhibit cross-references ("incorporated by reference to Exhibit 3.1"), Item 512 boilerplate, generic "where you can find more information" links, XBRL metadata.
 
-2. FORWARD_IBR: Does the text contain a FORWARD/AUTOMATIC IBR clause — language that incorporates ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) filed AFTER the effective date into the prospectus? (true/false)
-   This MUST be a sentence like: "all documents subsequently filed by the registrant pursuant to Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act prior to the termination of this offering shall be deemed incorporated by reference."
+2. FORWARD_IBR: Does the text contain a FORWARD/AUTOMATIC IBR clause incorporating ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) after the effective date? (true/false)
+   MUST be explicit language like: "all documents subsequently filed by the registrant pursuant to Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act prior to the termination of this offering shall be deemed incorporated by reference."
    Exhibit cross-references and Item 512 boilerplate are NOT forward IBR clauses.
 
-3. FORWARD_IBR_QUOTE: If FORWARD_IBR is true, copy the EXACT verbatim sentence. null if false.
-4. FORWARD_IBR_SECTION_HEADING: Exact heading of section containing forward IBR. null if not found.
-5. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of any specifically named 10-K or 20-F annual report in a true IBR section. null if only exhibit cross-references.
+3. FORWARD_IBR_QUOTE: Exact verbatim sentence if FORWARD_IBR=true, else null.
+4. FORWARD_IBR_SECTION_HEADING: Heading of section containing forward IBR, else null.
+5. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of specifically named annual report in a true IBR section, else null.
 6. SPECIFIC_ANNUAL_FORM: "10-K" or "20-F" or null.
-7. SPECIFIC_INTERIM_INCORPORATED: Fiscal period-end (YYYY-MM-DD) of any named 10-Q or 6-K. null if none.
-8. SPECIFIC_DOCS_LIST: Array of Exchange Act reports specifically listed in a true IBR section. Empty array if only exhibit cross-references found.
-9. IBR_SUMMARY: Factual 1-2 sentence summary. If no true IBR section found, say exactly: "No dedicated Incorporation by Reference section found. The document only contains standard exhibit cross-references."
+7. SPECIFIC_INTERIM_INCORPORATED: Period-end (YYYY-MM-DD) of specifically named 10-Q/6-K, else null.
+8. SPECIFIC_DOCS_LIST: Array of Exchange Act reports in a true IBR section. Empty array if only exhibit cross-references.
+9. IBR_SUMMARY: 1-2 sentence factual summary. If no true IBR section: "No dedicated Incorporation by Reference section found. The document only contains standard exhibit cross-references."
+10. IS_ONGOING_OFFERING: (true/false) Is the prospectus for an ONGOING offering where the prospectus will CONTINUE to be used AFTER the initial transaction closes? Examples that ARE ongoing: warrant exercise offers, continuous resale by selling shareholders, employee benefit plan registrations. Examples that are NOT ongoing (one-time transaction): a merger vote proxy/prospectus where securities are issued solely as merger consideration and there is no continuing offer after the merger closes. Base this on the cover page and plan of distribution language.
+11. ONGOING_OFFERING_REASON: 1 sentence explaining why you concluded IS_ONGOING_OFFERING is true or false.
 
-Extracted text:\n${contextToAnalyze.slice(0, 14000)}`,
+Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE / OFFERING TYPE CONTEXT:\n${offeringSnippet.slice(0, 3000)}`,
             response_json_schema: {
               type: "object",
               properties: {
@@ -361,7 +360,9 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}`,
                 specific_annual_form: { type: ["string", "null"] },
                 specific_interim_incorporated: { type: ["string", "null"] },
                 specific_docs_list: { type: "array", items: { type: "string" } },
-                ibr_summary: { type: ["string", "null"] }
+                ibr_summary: { type: ["string", "null"] },
+                is_ongoing_offering: { type: "boolean" },
+                ongoing_offering_reason: { type: ["string", "null"] }
               }
             }
           });
@@ -381,6 +382,18 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}`,
     // If forward IBR is present, subsequent Exchange Act filings are auto-incorporated
     // even in a non-shelf registration — treat it similarly to shelf IBR for gap analysis
     const hasForwardIBR = regIBRInfo?.forward_ibr === true;
+
+    // Determine if this S-4/F-4 is a one-time completed transaction (no ongoing prospectus use)
+    // or an ongoing offering (warrant exercises, resale, etc.) where Section 10(a)(3) applies.
+    // Section 10(a)(3) only triggers "when a prospectus is used" — if no prospectus is being
+    // actively used for ongoing offers, the obligation does not arise.
+    // We use the LLM's is_ongoing_offering determination from reading the actual document.
+    // If we couldn't read the document, conservatively assume it IS ongoing for S-4/F-4.
+    const isTransactionReg = isSorFFourBase && (
+      regIBRInfo !== null
+        ? regIBRInfo.is_ongoing_offering === false  // LLM confirmed: not an ongoing offering
+        : false  // couldn't read doc — assume ongoing to be conservative
+    );
 
     const belongsToThisReg = (f, resolvedProspectusRef = null) => {
       if (resolvedProspectusRef && f === resolvedProspectusRef) {
@@ -704,26 +717,27 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
     }
 
     // ── Transaction registrations (S-4/F-4 mergers) — short-circuit ──────────
-    // S-4 and F-4 registrations cover one-time business combination transactions.
-    // Once the merger/transaction is complete, the prospectus is no longer used for
-    // ongoing offers and Section 10(a)(3) ongoing currency obligations do not apply.
-    // The registration does not need to be "kept current" like a continuous offering.
+    // Section 10(a)(3) only applies "when a prospectus is used" (15 U.S.C. § 77j(a)(3)).
+    // For a completed one-time transaction (merger/business combination), the prospectus
+    // is no longer being used for any ongoing offer — so the obligation never triggers.
+    // This determination is made by the LLM reading the actual registration document above.
     if (isTransactionReg) {
+      const ongoingReason = regIBRInfo?.ongoing_offering_reason || "The prospectus was used solely for a one-time business combination transaction. Once the merger closed and merger consideration was issued, no further offers are being made using this prospectus.";
       checks.push({
         id: "transaction_reg_note",
-        label: "Transaction Registration (S-4/F-4) — Currency Analysis Not Applicable",
+        label: "One-Time Transaction Registration (S-4/F-4) — No Ongoing Prospectus Use",
         status: "info",
-        detail: `This is an S-4/F-4 transaction registration used for a business combination (merger/acquisition). Once the transaction is consummated, the registration is not used for ongoing offers and Section 10(a)(3) prospectus currency obligations do not apply. No ongoing update requirement exists for a completed transaction registration. If warrants were registered and are being exercised on an ongoing basis, a separate analysis under the warrant exercise prospectus would apply.`,
+        detail: `Section 10(a)(3) of the Securities Act only applies "when a prospectus is used" for ongoing offers. Based on review of the registration document: ${ongoingReason} Since no prospectus is being actively used for ongoing offers, Section 10(a)(3) currency obligations do not arise. If this registration also covers warrants being exercised on an ongoing basis or an ongoing resale, a separate Section 10(a)(3) analysis would apply to that prospectus.`,
         filingDate: null, filingUrl: edgarUrl(selectedReg), filingForm: selectedReg.form,
       });
       const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `Securities law expert. This is an S-4/F-4 transaction registration for a business combination by ${companyName} (${ticker.toUpperCase()}), filed ${selectedReg.date}, effective ${effectiveness.effectDate}. The transaction has been completed. The verdict MUST be "CURRENT" because completed transaction registrations are not subject to Section 10(a)(3) ongoing prospectus currency obligations. Briefly explain in 1-2 sentences why Section 10(a)(3) does not apply and what, if anything, the company should monitor going forward (e.g. warrant exercise prospectus if warrants are outstanding).`,
+        prompt: `Securities law expert. This is an S-4/F-4 registration for ${companyName} (${ticker.toUpperCase()}), filed ${selectedReg.date}, effective ${effectiveness.effectDate}. The LLM reviewed the actual registration document and determined it is a one-time transaction (not an ongoing offering): "${ongoingReason}". Under Section 10(a)(3) of the Securities Act (15 U.S.C. § 77j(a)(3)), the currency obligation only arises "when a prospectus is used." Since no prospectus is currently being used for ongoing offers, Section 10(a)(3) does not apply. Verdict MUST be "CURRENT". In 1-2 sentences explain this and note any caveats (e.g. if warrants are outstanding and being exercised, that prospectus would need separate analysis).`,
         response_json_schema: { type: "object", properties: { verdict: { type: "string", enum: ["CURRENT", "NOT CURRENT", "UNCERTAIN"] }, summary: { type: "string" }, key_issue: { type: "string" }, required_action: { type: "string" } } }
       });
       return Response.json({
         mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
         registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
-          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isWarrantReg, isTransactionReg: true,
+          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isTransactionReg: true,
           annualLimitMonths: null, interimLimitMonths: null,
           securitiesRegistered: securitiesRegistered || null },
         overallStatus: "pass", stage: "post_effective", applicableRule: "N/A — Completed Transaction Registration",
@@ -809,7 +823,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       return Response.json({
         mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
         registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
-          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isWarrantReg,
+          daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
           annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
           securitiesRegistered: securitiesRegistered || null },
         overallStatus: "fail", stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512",
@@ -1075,7 +1089,7 @@ Provide 2-3 sentence verdict citing Section 10(a)(3) specifically. What is the p
     return Response.json({
       mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
       registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
-        daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isWarrantReg,
+        daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
         annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
         securitiesRegistered: securitiesRegistered || null },
       overallStatus, stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512",
