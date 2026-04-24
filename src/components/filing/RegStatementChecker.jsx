@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   ShieldCheck, ShieldAlert, ShieldX, Search, ArrowRight,
   ChevronDown, ChevronUp, ExternalLink, ArrowLeft, Loader2,
-  FileText, Info
+  FileText, Info, Link2, Link2Off
 } from "lucide-react";
 
 // Status config for INDIVIDUAL checks — "pass" means this specific item checks out, NOT that the whole reg is current
@@ -230,6 +230,29 @@ export default function RegStatementChecker() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {detailResult.registration.form} filed {detailResult.registration.date} · {detailResult.companyName} ({detailResult.ticker}) · {detailResult.registration.isShelf ? "Shelf" : "Non-Shelf"}{detailResult.registration.isFPI ? " · FPI" : ""}{detailResult.registration.isFForm ? ` · F-form (${detailResult.registration.annualLimitMonths}mo annual / ${detailResult.registration.interimLimitMonths}mo interim)` : ""}
                   </p>
+                  {/* IBR Clause callout — shown prominently when detected */}
+                  {(() => {
+                    const ibrCheck = detailResult.checks.find(c => c.id === "ibr_status");
+                    if (!ibrCheck) return null;
+                    const isForward = ibrCheck.status === "pass";
+                    const isNoIBR = ibrCheck.status === "warn";
+                    return (
+                      <div className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                        isForward
+                          ? "bg-violet-50 border-violet-200 text-violet-700"
+                          : isNoIBR
+                            ? "bg-orange-50 border-orange-200 text-orange-700"
+                            : "bg-slate-50 border-slate-200 text-slate-600"
+                      }`}>
+                        {isForward
+                          ? <><Link2 className="w-3 h-3" /> Forward IBR Clause Present</>
+                          : isNoIBR
+                            ? <><Link2Off className="w-3 h-3" /> No IBR Clause — Manual Updates Required</>
+                            : <><Link2 className="w-3 h-3" /> Specific IBR Only (No Forward Clause)</>
+                        }
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
               {detailResult.registration.url && (
