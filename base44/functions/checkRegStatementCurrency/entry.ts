@@ -667,8 +667,10 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         }
       }
     } else {
-      // Non-shelf: fiscal year-end from LLM extraction, or update document date as proxy
+      // Non-shelf: fiscal year-end from LLM extraction, or update document date as proxy.
+      // If forward IBR is present, the latest annual report IS auto-incorporated even without a 424B/POS AM.
       const annualFiscalYearEnd = prospectusIncorporatedDate ||
+        (hasForwardIBR && latestAnnual?.date) ||
         latestPostEffective?.date || latestProspectus?.date || null;
 
       if (!annualFiscalYearEnd) {
@@ -692,7 +694,9 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
           fsStatus = "pass";
           const src = prospectusIncorporatedDate
             ? `Fiscal year-end from ${latestProspectus?.form || "prospectus"} ${latestProspectus?.date}.`
-            : `${latestPostEffective?.form || latestProspectus?.form || "update"} date used as conservative proxy.`;
+            : (hasForwardIBR && latestAnnual?.date)
+              ? `${latestAnnual.form} (${latestAnnual.date}) auto-incorporated via forward IBR clause.`
+              : `${latestPostEffective?.form || latestProspectus?.form || "update"} date used as conservative proxy.`;
           fsDetail = `Section 10(a)(3)(ii): Audited FS fiscal year-end ${annualFiscalYearEnd} is ${annualAge} days old — within ${Math.round(ANNUAL_LIMIT/30)}-month limit. ${src}`;
         }
       }
