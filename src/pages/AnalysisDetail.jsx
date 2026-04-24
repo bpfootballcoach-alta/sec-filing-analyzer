@@ -36,6 +36,7 @@ import RiskFactorsList from "@/components/filing/RiskFactorsList";
 import FinancingDetails from "@/components/filing/FinancingDetails";
 import NarrativeHighlights from "@/components/filing/NarrativeHighlights";
 import RegistrationCurrencyCheck from "@/components/filing/RegistrationCurrencyCheck";
+import SourceModal from "@/components/filing/SourceModal";
 
 export default function AnalysisDetail() {
   const pathParts = window.location.pathname.split("/");
@@ -273,6 +274,11 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
             <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
               {analysis.executive_summary}
             </p>
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="executive summary and business overview" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
         )}
 
@@ -280,6 +286,11 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
         {analysis.narrative_highlights && (
           <SectionCard title="What's In This Filing" icon={MessageSquare} delay={0.08}>
             <NarrativeHighlights narrative={analysis.narrative_highlights} />
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="management commentary, business developments, and significant events" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
         )}
 
@@ -296,21 +307,41 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
           {/* Revenue */}
           <SectionCard title="Revenue" icon={DollarSign} delay={0.15}>
             <RevenueBreakdown revenueData={analysis.revenue_data} />
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="total revenue, revenue segments, and revenue growth" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
 
           {/* Profitability */}
           <SectionCard title="Profitability" icon={TrendingUp} delay={0.2}>
             <ProfitabilityTable profitability={analysis.profitability} />
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="gross margin, operating margin, net margin, EBITDA, and earnings per share" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
 
           {/* Balance Sheet */}
           <SectionCard title="Balance Sheet" icon={BarChart3} delay={0.25}>
             <BalanceSheetTable balanceSheet={analysis.balance_sheet} />
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="total assets, total liabilities, stockholders equity, cash and equivalents, and total debt" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
 
           {/* Cash Flow */}
           <SectionCard title="Cash Flow" icon={Wallet} delay={0.3}>
             <CashFlowTable cashFlow={analysis.cash_flow} />
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="operating cash flow, investing activities, financing activities, and free cash flow" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
         </div>
 
@@ -321,6 +352,11 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
             capitalStructure={analysis.capital_structure}
             financingActivity={analysis.financing_activity}
           />
+          {analysis.file_url && (
+            <div className="mt-3 pt-3 border-t border-border/40">
+              <SourceModal fileUrl={analysis.file_url} topic="capital structure, debt instruments, financing transactions, equity, and credit facilities" label="Find in filing" />
+            </div>
+          )}
         </SectionCard>
 
         {/* Key Insights */}
@@ -332,7 +368,14 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
                   <div className="w-6 h-6 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <span className="text-xs font-bold text-accent">{i + 1}</span>
                   </div>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{insight}</p>
+                  <div className="flex-1">
+                    <p className="text-sm text-muted-foreground leading-relaxed">{insight}</p>
+                    {analysis.file_url && (
+                      <div className="mt-1">
+                        <SourceModal fileUrl={analysis.file_url} topic={insight} label="Find source" />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -348,6 +391,11 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
         {analysis.risk_factors && analysis.risk_factors.length > 0 && (
           <SectionCard title="Risk Factors" icon={AlertTriangle} delay={0.5}>
             <RiskFactorsList risks={analysis.risk_factors} />
+            {analysis.file_url && (
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <SourceModal fileUrl={analysis.file_url} topic="risk factors" label="Find in filing" />
+              </div>
+            )}
           </SectionCard>
         )}
       </main>
