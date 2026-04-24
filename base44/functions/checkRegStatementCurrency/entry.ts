@@ -302,23 +302,54 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
         const regDocRes = await fetch(regDocUrl, { headers: HEADERS });
         if (regDocRes.ok) {
           const regDocText = await regDocRes.text();
-          // Extract the IBR section — it typically appears near the front of the document
-          // Search for "INCORPORATION BY REFERENCE" heading and grab nearby text
+
+          // Strip HTML tags and collapse whitespace to get readable text
+          const plainText = regDocText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+          // Search for IBR section by looking for the keyword anywhere in the full text
+          // "INCORPORATION" keyword position
+          const ibrKeyword = /incorporat\w*\s+by\s+reference|where\s+you\s+can\s+find\s+more\s+information/gi;
+          let ibrSnippet = "";
+          let match;
+          const snippets = [];
+          while ((match = ibrKeyword.exec(plainText)) !== null) {
+            const start = Math.max(0, match.index - 200);
+            const end = Math.min(plainText.length, match.index + 3000);
+            snippets.push(plainText.slice(start, end));
+            if (snippets.length >= 5) break; // cap at 5 occurrences
+          }
+          ibrSnippet = snippets.join("\n\n---\n\n");
+
+          // Also grab last 8000 chars where IBR sections often appear at end of S-4
+          const tailText = plainText.slice(-8000);
+
+          const contextToAnalyze = ibrSnippet
+            ? `EXTRACTED IBR-RELEVANT SECTIONS (found by keyword search):\n${ibrSnippet.slice(0, 12000)}\n\nDOCUMENT TAIL (last portion):\n${tailText}`
+            : `No IBR keyword found in document. Document tail:\n${tailText}`;
+
           const ibr = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `Analyze this SEC registration statement for its "Incorporation by Reference" (IBR) provisions. Extract the following:
+            prompt: `You are reviewing extracted sections of an SEC registration statement that were found by searching for "incorporation by reference" keywords. Based ONLY on what you see below, determine:
 
-1. HAS_IBR_SECTION: Does the document contain an "Incorporation by Reference" section? (true/false)
-2. FORWARD_IBR: Does the document contain language that automatically incorporates ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) filed after the registration date? This is sometimes called a "forward-looking" or "automatic" IBR clause. Look for phrases like "all documents filed pursuant to Section 13(a), 13(c), 14 or 15(d) of the Exchange Act after the date of this prospectus" or "any future filings made with the SEC under Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act." (true/false)
-3. FORWARD_IBR_QUOTE: If FORWARD_IBR is true, copy the EXACT verbatim sentence(s) from the document that contain the forward IBR language (up to 3 sentences max). null if none.
-4. FORWARD_IBR_SECTION_HEADING: If FORWARD_IBR is true, the exact heading of the section where the forward IBR language appears (e.g. "INCORPORATION OF CERTAIN INFORMATION BY REFERENCE", "WHERE YOU CAN FIND MORE INFORMATION"). null if not found.
-5. SPECIFIC_ANNUAL_INCORPORATED: The fiscal year-end date (YYYY-MM-DD) of the most recently audited annual report (10-K or 20-F) specifically named and incorporated by reference in this document. E.g. "Annual Report on Form 10-K for the year ended December 31, 2024" → "2024-12-31". null if none.
+1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section (a section with that heading that lists Exchange Act reports incorporated into this registration)? (true/false).
+   CRITICAL DISTINCTIONS — these do NOT count as an IBR section:
+   - Exhibit cross-references like "incorporated by reference to Exhibit 3.1 of Form S-1" (these are just exhibit citations)
+   - Item 512 undertakings boilerplate about post-effective amendments
+   - Generic phrases "where you can find more information" that just point to EDGAR search
+   - XBRL metadata or cover page boilerplate
+
+2. FORWARD_IBR: Does the text contain a FORWARD/AUTOMATIC IBR clause — language that incorporates ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) filed AFTER the effective date into the prospectus? (true/false)
+   This MUST be a sentence like: "all documents subsequently filed by the registrant pursuant to Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act prior to the termination of this offering shall be deemed incorporated by reference."
+   Exhibit cross-references and Item 512 boilerplate are NOT forward IBR clauses.
+
+3. FORWARD_IBR_QUOTE: If FORWARD_IBR is true, copy the EXACT verbatim sentence. null if false.
+4. FORWARD_IBR_SECTION_HEADING: Exact heading of section containing forward IBR. null if not found.
+5. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of any specifically named 10-K or 20-F annual report in a true IBR section. null if only exhibit cross-references.
 6. SPECIFIC_ANNUAL_FORM: "10-K" or "20-F" or null.
-7. SPECIFIC_INTERIM_INCORPORATED: The fiscal period-end date (YYYY-MM-DD) of the most recent 10-Q or 6-K specifically incorporated by reference. null if none.
-8. SPECIFIC_DOCS_LIST: Array of short descriptions of each specific named document incorporated by reference (e.g. ["Annual Report on Form 10-K for FY ended Dec 31, 2023", "Proxy Statement filed March 15, 2024"]). Empty array if none.
-9. IBR_SUMMARY: 1-2 sentence plain-English summary of what is incorporated by reference.
+7. SPECIFIC_INTERIM_INCORPORATED: Fiscal period-end (YYYY-MM-DD) of any named 10-Q or 6-K. null if none.
+8. SPECIFIC_DOCS_LIST: Array of Exchange Act reports specifically listed in a true IBR section. Empty array if only exhibit cross-references found.
+9. IBR_SUMMARY: Factual 1-2 sentence summary. If no true IBR section found, say exactly: "No dedicated Incorporation by Reference section found. The document only contains standard exhibit cross-references."
 
-Return JSON only.
-Document (first 15000 chars):\n${regDocText.slice(0, 15000)}`,
+Extracted text:\n${contextToAnalyze.slice(0, 14000)}`,
             response_json_schema: {
               type: "object",
               properties: {
