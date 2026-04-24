@@ -309,10 +309,13 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
 
 1. HAS_IBR_SECTION: Does the document contain an "Incorporation by Reference" section? (true/false)
 2. FORWARD_IBR: Does the document contain language that automatically incorporates ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) filed after the registration date? This is sometimes called a "forward-looking" or "automatic" IBR clause. Look for phrases like "all documents filed pursuant to Section 13(a), 13(c), 14 or 15(d) of the Exchange Act after the date of this prospectus" or "any future filings made with the SEC under Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act." (true/false)
-3. SPECIFIC_ANNUAL_INCORPORATED: The fiscal year-end date (YYYY-MM-DD) of the most recently audited annual report (10-K or 20-F) specifically named and incorporated by reference in this document. E.g. "Annual Report on Form 10-K for the year ended December 31, 2024" → "2024-12-31". null if none.
-4. SPECIFIC_ANNUAL_FORM: "10-K" or "20-F" or null.
-5. SPECIFIC_INTERIM_INCORPORATED: The fiscal period-end date (YYYY-MM-DD) of the most recent 10-Q or 6-K specifically incorporated by reference. null if none.
-6. IBR_SUMMARY: 1-2 sentence plain-English summary of what is incorporated by reference.
+3. FORWARD_IBR_QUOTE: If FORWARD_IBR is true, copy the EXACT verbatim sentence(s) from the document that contain the forward IBR language (up to 3 sentences max). null if none.
+4. FORWARD_IBR_SECTION_HEADING: If FORWARD_IBR is true, the exact heading of the section where the forward IBR language appears (e.g. "INCORPORATION OF CERTAIN INFORMATION BY REFERENCE", "WHERE YOU CAN FIND MORE INFORMATION"). null if not found.
+5. SPECIFIC_ANNUAL_INCORPORATED: The fiscal year-end date (YYYY-MM-DD) of the most recently audited annual report (10-K or 20-F) specifically named and incorporated by reference in this document. E.g. "Annual Report on Form 10-K for the year ended December 31, 2024" → "2024-12-31". null if none.
+6. SPECIFIC_ANNUAL_FORM: "10-K" or "20-F" or null.
+7. SPECIFIC_INTERIM_INCORPORATED: The fiscal period-end date (YYYY-MM-DD) of the most recent 10-Q or 6-K specifically incorporated by reference. null if none.
+8. SPECIFIC_DOCS_LIST: Array of short descriptions of each specific named document incorporated by reference (e.g. ["Annual Report on Form 10-K for FY ended Dec 31, 2023", "Proxy Statement filed March 15, 2024"]). Empty array if none.
+9. IBR_SUMMARY: 1-2 sentence plain-English summary of what is incorporated by reference.
 
 Return JSON only.
 Document (first 15000 chars):\n${regDocText.slice(0, 15000)}`,
@@ -321,9 +324,12 @@ Document (first 15000 chars):\n${regDocText.slice(0, 15000)}`,
               properties: {
                 has_ibr_section: { type: "boolean" },
                 forward_ibr: { type: "boolean" },
+                forward_ibr_quote: { type: ["string", "null"] },
+                forward_ibr_section_heading: { type: ["string", "null"] },
                 specific_annual_incorporated: { type: ["string", "null"] },
                 specific_annual_form: { type: ["string", "null"] },
                 specific_interim_incorporated: { type: ["string", "null"] },
+                specific_docs_list: { type: "array", items: { type: "string" } },
                 ibr_summary: { type: ["string", "null"] }
               }
             }
@@ -614,6 +620,58 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       filingDate: effectiveness.effectDate || null, filingUrl: null, filingForm: null,
     });
 
+    // ── CHECK: IBR status of the registration document ──────────────────────
+    // Surface whether the registration statement itself contains IBR language,
+    // including any forward/automatic IBR clause that auto-incorporates future filings.
+    // This runs for ALL registration types including transaction regs (S-4/F-4).
+    if (regIBRInfo !== null) {
+      let ibrStatus, ibrDetail;
+      if (!regIBRInfo.has_ibr_section) {
+        ibrStatus = "warn";
+        ibrDetail = `No Incorporation by Reference section detected in the registration statement. All financial statement updates must be made via 424B supplement or effective POS AM — no automatic IBR refresh available.`;
+      } else if (regIBRInfo.forward_ibr) {
+        ibrStatus = "pass";
+        ibrDetail = `Forward/automatic IBR clause detected`;
+        if (regIBRInfo.forward_ibr_section_heading) {
+          ibrDetail += ` in section: "${regIBRInfo.forward_ibr_section_heading}"`;
+        }
+        ibrDetail += `. Subsequent Exchange Act filings (10-K, 10-Q, 8-K) filed after the registration date are automatically incorporated by reference.`;
+        if (regIBRInfo.forward_ibr_quote) {
+          ibrDetail += ` Exact language: "${regIBRInfo.forward_ibr_quote}"`;
+        }
+        if (regIBRInfo.ibr_summary) {
+          ibrDetail += ` ${regIBRInfo.ibr_summary}`;
+        }
+        if (regIBRInfo.specific_docs_list?.length > 0) {
+          ibrDetail += ` Specific named documents also incorporated: ${regIBRInfo.specific_docs_list.join("; ")}.`;
+        } else if (regIBRInfo.specific_annual_incorporated) {
+          ibrDetail += ` Specifically named: annual FS with fiscal year-end ${regIBRInfo.specific_annual_incorporated}${regIBRInfo.specific_interim_incorporated ? `; interim FS through ${regIBRInfo.specific_interim_incorporated}` : ""}.`;
+        }
+      } else {
+        ibrStatus = "info";
+        ibrDetail = `IBR section present`;
+        if (regIBRInfo.forward_ibr_section_heading) {
+          ibrDetail += ` ("${regIBRInfo.forward_ibr_section_heading}")`;
+        }
+        ibrDetail += ` but NO forward/automatic IBR clause — only specific named documents are incorporated. Future Exchange Act filings are NOT automatically incorporated.`;
+        if (regIBRInfo.ibr_summary) {
+          ibrDetail += ` ${regIBRInfo.ibr_summary}`;
+        }
+        if (regIBRInfo.specific_docs_list?.length > 0) {
+          ibrDetail += ` Named documents: ${regIBRInfo.specific_docs_list.join("; ")}.`;
+        } else if (regIBRInfo.specific_annual_incorporated) {
+          ibrDetail += ` Specifically named: annual FS with fiscal year-end ${regIBRInfo.specific_annual_incorporated}${regIBRInfo.specific_interim_incorporated ? `; interim FS through ${regIBRInfo.specific_interim_incorporated}` : ""}.`;
+        }
+      }
+      checks.push({
+        id: "ibr_status",
+        label: "Incorporation by Reference (IBR) — Registration Statement Language",
+        status: ibrStatus,
+        detail: ibrDetail,
+        filingDate: null, filingUrl: edgarUrl(selectedReg), filingForm: selectedReg.form,
+      });
+    }
+
     // ── Transaction registrations (S-4/F-4 mergers) — short-circuit ──────────
     // S-4 and F-4 registrations cover one-time business combination transactions.
     // Once the merger/transaction is complete, the prospectus is no longer used for
@@ -639,36 +697,6 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
           securitiesRegistered: securitiesRegistered || null },
         overallStatus: "pass", stage: "post_effective", applicableRule: "N/A — Completed Transaction Registration",
         aiSummary: aiSummary || null, checks, checkedAt: new Date().toISOString(),
-      });
-    }
-
-    // ── CHECK: IBR status of the registration document ──────────────────────
-    // Surface whether the registration statement itself contains IBR language,
-    // including any forward/automatic IBR clause that auto-incorporates future filings.
-    if (regIBRInfo !== null) {
-      let ibrStatus, ibrDetail;
-      if (!regIBRInfo.has_ibr_section) {
-        ibrStatus = "warn";
-        ibrDetail = `No Incorporation by Reference section detected in the registration statement. All financial statement updates must be made via 424B supplement or effective POS AM — no automatic IBR refresh available.`;
-      } else if (regIBRInfo.forward_ibr) {
-        ibrStatus = "pass";
-        ibrDetail = `Forward/automatic IBR clause detected: subsequent Exchange Act filings (10-K, 10-Q, 8-K) filed after the registration date are automatically incorporated by reference. ${regIBRInfo.ibr_summary || ""}`;
-        if (regIBRInfo.specific_annual_incorporated) {
-          ibrDetail += ` Specifically named: annual FS with fiscal year-end ${regIBRInfo.specific_annual_incorporated}${regIBRInfo.specific_interim_incorporated ? `; interim FS through ${regIBRInfo.specific_interim_incorporated}` : ""}.`;
-        }
-      } else {
-        ibrStatus = "info";
-        ibrDetail = `IBR section present but NO forward/automatic IBR clause — only specific named documents are incorporated. Future Exchange Act filings are NOT automatically incorporated. ${regIBRInfo.ibr_summary || ""}`;
-        if (regIBRInfo.specific_annual_incorporated) {
-          ibrDetail += ` Specifically named: annual FS with fiscal year-end ${regIBRInfo.specific_annual_incorporated}${regIBRInfo.specific_interim_incorporated ? `; interim FS through ${regIBRInfo.specific_interim_incorporated}` : ""}.`;
-        }
-      }
-      checks.push({
-        id: "ibr_status",
-        label: "Incorporation by Reference (IBR) — Registration Statement Language",
-        status: ibrStatus,
-        detail: ibrDetail,
-        filingDate: null, filingUrl: edgarUrl(selectedReg), filingForm: selectedReg.form,
       });
     }
 
