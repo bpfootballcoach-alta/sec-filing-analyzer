@@ -282,6 +282,63 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     let prospectusIncorporatedForm = null;
     let prospectusInterimPeriodEndDate = null;  // period-end of interim FS in live prospectus
 
+    // ── IBR analysis of the registration statement itself ─────────────────────
+    // Many non-shelf registrations (S-1, S-4, F-1, etc.) contain an explicit
+    // "Incorporation by Reference" section that lists specific Exchange Act reports
+    // AND/OR adopts a "forward" or "automatic" IBR clause that incorporates ALL
+    // future Exchange Act filings automatically.
+    // If such a forward IBR clause exists, subsequently filed 10-Ks and 10-Qs are
+    // incorporated into the prospectus without a new 424B or POS AM.
+    let regIBRInfo = null; // will hold LLM-extracted IBR data from the registration document
+    if (selectedReg?.doc) {
+      try {
+        const regDocUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accession.replace(/-/g, "")}/${selectedReg.doc}`;
+        const regDocRes = await fetch(regDocUrl, { headers: HEADERS });
+        if (regDocRes.ok) {
+          const regDocText = await regDocRes.text();
+          // Extract the IBR section — it typically appears near the front of the document
+          // Search for "INCORPORATION BY REFERENCE" heading and grab nearby text
+          const ibr = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `Analyze this SEC registration statement for its "Incorporation by Reference" (IBR) provisions. Extract the following:
+
+1. HAS_IBR_SECTION: Does the document contain an "Incorporation by Reference" section? (true/false)
+2. FORWARD_IBR: Does the document contain language that automatically incorporates ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) filed after the registration date? This is sometimes called a "forward-looking" or "automatic" IBR clause. Look for phrases like "all documents filed pursuant to Section 13(a), 13(c), 14 or 15(d) of the Exchange Act after the date of this prospectus" or "any future filings made with the SEC under Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act." (true/false)
+3. SPECIFIC_ANNUAL_INCORPORATED: The fiscal year-end date (YYYY-MM-DD) of the most recently audited annual report (10-K or 20-F) specifically named and incorporated by reference in this document. E.g. "Annual Report on Form 10-K for the year ended December 31, 2024" → "2024-12-31". null if none.
+4. SPECIFIC_ANNUAL_FORM: "10-K" or "20-F" or null.
+5. SPECIFIC_INTERIM_INCORPORATED: The fiscal period-end date (YYYY-MM-DD) of the most recent 10-Q or 6-K specifically incorporated by reference. null if none.
+6. IBR_SUMMARY: 1-2 sentence plain-English summary of what is incorporated by reference.
+
+Return JSON only.
+Document (first 15000 chars):\n${regDocText.slice(0, 15000)}`,
+            response_json_schema: {
+              type: "object",
+              properties: {
+                has_ibr_section: { type: "boolean" },
+                forward_ibr: { type: "boolean" },
+                specific_annual_incorporated: { type: ["string", "null"] },
+                specific_annual_form: { type: ["string", "null"] },
+                specific_interim_incorporated: { type: ["string", "null"] },
+                ibr_summary: { type: ["string", "null"] }
+              }
+            }
+          });
+          regIBRInfo = ibr;
+          // If the reg doc itself incorporates a specific annual by reference, use that date
+          if (ibr?.specific_annual_incorporated && /^\d{4}-\d{2}-\d{2}$/.test(ibr.specific_annual_incorporated)) {
+            prospectusIncorporatedDate = prospectusIncorporatedDate || ibr.specific_annual_incorporated;
+            prospectusIncorporatedForm = prospectusIncorporatedForm || ibr.specific_annual_form;
+          }
+          if (ibr?.specific_interim_incorporated && /^\d{4}-\d{2}-\d{2}$/.test(ibr.specific_interim_incorporated)) {
+            prospectusInterimPeriodEndDate = prospectusInterimPeriodEndDate || ibr.specific_interim_incorporated;
+          }
+        }
+      } catch (_) { /* non-critical */ }
+    }
+
+    // If forward IBR is present, subsequent Exchange Act filings are auto-incorporated
+    // even in a non-shelf registration — treat it similarly to shelf IBR for gap analysis
+    const hasForwardIBR = regIBRInfo?.forward_ibr === true;
+
     const belongsToThisReg = (f, resolvedProspectusRef = null) => {
       if (resolvedProspectusRef && f === resolvedProspectusRef) {
         return !prospectusRegNumber || !regFileNumber || prospectusRegNumber === regFileNumber;
@@ -551,6 +608,36 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       filingDate: effectiveness.effectDate || null, filingUrl: null, filingForm: null,
     });
 
+    // ── CHECK: IBR status of the registration document ──────────────────────
+    // Surface whether the registration statement itself contains IBR language,
+    // including any forward/automatic IBR clause that auto-incorporates future filings.
+    if (regIBRInfo !== null) {
+      let ibrStatus, ibrDetail;
+      if (!regIBRInfo.has_ibr_section) {
+        ibrStatus = "warn";
+        ibrDetail = `No Incorporation by Reference section detected in the registration statement. All financial statement updates must be made via 424B supplement or effective POS AM — no automatic IBR refresh available.`;
+      } else if (regIBRInfo.forward_ibr) {
+        ibrStatus = "pass";
+        ibrDetail = `Forward/automatic IBR clause detected: subsequent Exchange Act filings (10-K, 10-Q, 8-K) filed after the registration date are automatically incorporated by reference. ${regIBRInfo.ibr_summary || ""}`;
+        if (regIBRInfo.specific_annual_incorporated) {
+          ibrDetail += ` Specifically named: annual FS with fiscal year-end ${regIBRInfo.specific_annual_incorporated}${regIBRInfo.specific_interim_incorporated ? `; interim FS through ${regIBRInfo.specific_interim_incorporated}` : ""}.`;
+        }
+      } else {
+        ibrStatus = "info";
+        ibrDetail = `IBR section present but NO forward/automatic IBR clause — only specific named documents are incorporated. Future Exchange Act filings are NOT automatically incorporated. ${regIBRInfo.ibr_summary || ""}`;
+        if (regIBRInfo.specific_annual_incorporated) {
+          ibrDetail += ` Specifically named: annual FS with fiscal year-end ${regIBRInfo.specific_annual_incorporated}${regIBRInfo.specific_interim_incorporated ? `; interim FS through ${regIBRInfo.specific_interim_incorporated}` : ""}.`;
+        }
+      }
+      checks.push({
+        id: "ibr_status",
+        label: "Incorporation by Reference (IBR) — Registration Statement Language",
+        status: ibrStatus,
+        detail: ibrDetail,
+        filingDate: null, filingUrl: edgarUrl(selectedReg), filingForm: selectedReg.form,
+      });
+    }
+
     // ── CHECK B: Section 10(a)(3)(ii) — 16-month hard cap on audited FS age ─
     // Measured from the FISCAL YEAR-END DATE of the audited FS in the live prospectus.
     // For shelf: IBR auto-incorporates the latest annual. Use prospectus-extracted date first,
@@ -648,17 +735,29 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
     // After 9 months from the effective date, the prospectus CANNOT be used for
     // offers unless it has been updated AND the update reflects FS at least as
     // current as the most recently filed annual/quarterly report.
-    // For shelf: IBR refreshes automatically — no separate 9-month check needed.
-    // For non-shelf: requires 424B supplement or effective POS AM.
+    // For shelf OR forward-IBR non-shelf: IBR refreshes automatically.
+    // For non-shelf without forward IBR: requires 424B supplement or effective POS AM.
     if (!isShelf) {
       if (daysSinceEffective > SECTION_10A3_9_MONTHS) {
-        if (!mostRecentEffectiveUpdate) {
+        if (hasForwardIBR) {
+          // Forward IBR means all subsequent Exchange Act filings are auto-incorporated —
+          // no 424B or POS AM needed to satisfy Section 10(a)(3)(i).
+          // The 16-month annual FS age cap still applies.
+          const latestIncorporated = latestAnnual || latestQuarterly;
+          checks.push({
+            id: "section10a3_nine_month",
+            label: "Section 10(a)(3)(i) — 9-Month Usability (Forward IBR)",
+            status: "pass",
+            detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago (past 9-month mark). Forward/automatic IBR clause in registration statement auto-incorporates all subsequent Exchange Act filings — no 424B supplement or POS AM required. ${latestIncorporated ? `Most recent auto-incorporated: ${latestIncorporated.form} (${latestIncorporated.date}).` : ""}`,
+            filingDate: latestIncorporated?.date || null, filingUrl: edgarUrl(latestIncorporated), filingForm: latestIncorporated?.form || null,
+          });
+        } else if (!mostRecentEffectiveUpdate) {
           checks.push({
             id: "section10a3_nine_month",
             label: "Section 10(a)(3)(i) — 9-Month Usability Limit",
             status: "fail",
             failCode: "prospectus_unusable_past_nine_months_no_update",
-            detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago (${Math.round(daysSinceEffective/30)} months) — past the 9-month limit. No 424B supplement or effective POS AM has been filed. The prospectus CANNOT be used for offers. To restore usability: file a 424B supplement or effective POS AM with current financial statements. NOT CURRENT.`,
+            detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago (${Math.round(daysSinceEffective/30)} months) — past the 9-month limit. No 424B supplement, effective POS AM, or forward IBR clause found. The prospectus CANNOT be used for offers. To restore usability: file a 424B supplement or effective POS AM with current financial statements. NOT CURRENT.`,
             filingDate: null, filingUrl: null, filingForm: null,
           });
         } else {
@@ -700,7 +799,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
           id: "section10a3_nine_month",
           label: "Section 10(a)(3)(i) — 9-Month Usability Limit",
           status: "pass",
-          detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago — still within the 9-month usability window (${SECTION_10A3_9_MONTHS} days). No update required yet.`,
+          detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago — still within the 9-month usability window (${SECTION_10A3_9_MONTHS} days). No update required yet.${hasForwardIBR ? " Forward IBR clause present — subsequent Exchange Act filings auto-incorporated." : ""}`,
           filingDate: null, filingUrl: null, filingForm: null,
         });
       }
@@ -760,13 +859,17 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         else if (annualDaysForQ > 180) expectedQ = 2;
         else if (annualDaysForQ > 90) expectedQ = 1;
       }
+      // If forward IBR is present, all subsequent filings are auto-incorporated — no gap possible
       const liveProspectusBaselineDate = !isShelf && mostRecentEffectiveUpdate ? new Date(mostRecentEffectiveUpdate.date) : effectiveDate;
-      const unincorporatedQuarterlies = !isShelf ? quarterlies.filter(f => new Date(f.date) > liveProspectusBaselineDate) : [];
+      const unincorporatedQuarterlies = (!isShelf && !hasForwardIBR) ? quarterlies.filter(f => new Date(f.date) > liveProspectusBaselineDate) : [];
 
       if (!annualDateForQ) {
-        if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0 && daysSinceEffective > SECTION_10A3_9_MONTHS) {
+        if (quarterlies.length > 0 && hasForwardIBR) {
+          quarterlyStatus = "pass";
+          quarterlyDetail = `${quarterlies.length} 10-Q(s) on EDGAR. Forward IBR clause auto-incorporates all subsequent Exchange Act filings — no manual prospectus update required. Most recent: ${quarterlies[0].form} ${quarterlies[0].date}.`;
+        } else if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0 && daysSinceEffective > SECTION_10A3_9_MONTHS) {
           quarterlyStatus = "warn";
-          quarterlyDetail = `INCORPORATION GAP: ${unincorporatedQuarterlies.length} 10-Q(s) filed after last prospectus update are NOT incorporated in the live prospectus. A 10-Q does not auto-update a non-shelf prospectus — incorporate via 424B3 or effective POS AM.`;
+          quarterlyDetail = `INCORPORATION GAP: ${unincorporatedQuarterlies.length} 10-Q(s) filed after last prospectus update are NOT incorporated in the live prospectus. No forward IBR clause found — a 10-Q does not auto-update a non-shelf prospectus. Incorporate via 424B3 or effective POS AM.`;
         } else if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0) {
           quarterlyStatus = "pass";
           quarterlyDetail = `${quarterlies.length} 10-Q(s) filed on EDGAR (most recent: ${quarterlies[0].form} ${quarterlies[0].date}). ${unincorporatedQuarterlies.length} not yet incorporated, but within the 9-month window (effective ${daysSinceEffective} days ago) — no update required yet.`;
@@ -783,16 +886,14 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       } else if (quartersFiledSinceAnnual < expectedQ) {
         quarterlyStatus = "fail";
         quarterlyDetail = `EDGAR FILING GAP: Only ${quartersFiledSinceAnnual} of ${expectedQ} expected 10-Q(s) filed since last 10-K (${latestAnnual.date}). ${expectedQ - quartersFiledSinceAnnual} report(s) missing — company may be delinquent.`;
-      } else if (!isShelf && unincorporatedQuarterlies.length > 0 && daysSinceEffective > SECTION_10A3_9_MONTHS) {
-        // Only flag incorporation gap as a problem AFTER the 9-month mark.
-        // Before 9 months, the prospectus can still be used without updating for newer 10-Qs
-        // (the 9-month clock check already handles this as a hard fail when past 9 months).
+      } else if (!isShelf && !hasForwardIBR && unincorporatedQuarterlies.length > 0 && daysSinceEffective > SECTION_10A3_9_MONTHS) {
+        // Only flag incorporation gap as a problem AFTER the 9-month mark AND only if no forward IBR.
         quarterlyStatus = "warn";
-        quarterlyDetail = `INCORPORATION GAP: ${quartersFiledSinceAnnual}/${expectedQ} 10-Qs current on EDGAR, but ${unincorporatedQuarterlies.length} filed after last prospectus update (${mostRecentEffectiveUpdate?.date || effectiveDate.toISOString().split("T")[0]}) are NOT in the live prospectus. Incorporate via 424B3 or effective POS AM. Most recent unincorporated: ${unincorporatedQuarterlies[0].form} ${unincorporatedQuarterlies[0].date}.`;
-      } else if (!isShelf && unincorporatedQuarterlies.length > 0) {
+        quarterlyDetail = `INCORPORATION GAP: ${quartersFiledSinceAnnual}/${expectedQ} 10-Qs current on EDGAR, but ${unincorporatedQuarterlies.length} filed after last prospectus update (${mostRecentEffectiveUpdate?.date || effectiveDate.toISOString().split("T")[0]}) are NOT in the live prospectus. No forward IBR clause found — incorporate via 424B3 or effective POS AM. Most recent unincorporated: ${unincorporatedQuarterlies[0].form} ${unincorporatedQuarterlies[0].date}.`;
+      } else if (!isShelf && !hasForwardIBR && unincorporatedQuarterlies.length > 0) {
         // Within 9 months — note the gap informally but not a current violation
         quarterlyStatus = "pass";
-        quarterlyDetail = `${quartersFiledSinceAnnual}/${expectedQ} expected 10-Q(s) filed on EDGAR. ${unincorporatedQuarterlies.length} filed after last prospectus update are not yet incorporated, but Section 10(a)(3) does not require an update until after the 9-month mark (effective ${daysSinceEffective} days ago). No action required yet.`;
+        quarterlyDetail = `${quartersFiledSinceAnnual}/${expectedQ} expected 10-Q(s) filed on EDGAR. ${unincorporatedQuarterlies.length} not yet incorporated, but within the 9-month window (effective ${daysSinceEffective} days ago) and no forward IBR issue yet — no action required yet.`;
       } else {
         quarterlyStatus = "pass";
         quarterlyDetail = `${quartersFiledSinceAnnual}/${expectedQ} expected 10-Q(s) filed and incorporated. (No Q4 10-Q required — covered by 10-K.)`;
@@ -845,9 +946,11 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
 
     const frameworkNote = isShelf
       ? `Shelf (${selectedReg.form}) — Section 10(a)(3) / Item 512(a). Later 10-K/10-Q filings automatically refresh via IBR. Hard cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end of audited FS.`
-      : isFForm
-        ? `F-form (${selectedReg.form}) — Section 10(a)(3). Annual FS cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end. 9-month usability limit from effective date. IBR NOT automatic on F-1/F-4.`
-        : `Domestic non-shelf (${selectedReg.form}) — Section 10(a)(3) / Item 512. Two tests: (a) 16-month hard cap on audited FS fiscal year-end; (b) 9-month usability limit — after 9 months, prospectus unusable unless updated AND updated FS are as current as latest filed 10-K/10-Q. A bare 10-Q filing does NOT update the prospectus — requires 424B supplement or effective POS AM.`;
+      : hasForwardIBR
+        ? `Non-shelf (${selectedReg.form}) WITH FORWARD IBR CLAUSE — Section 10(a)(3) / Item 512. The registration statement contains a forward/automatic IBR clause that incorporates all subsequent Exchange Act filings. Hard cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end of audited FS. IBR auto-refresh applies to all 10-K/10-Q/8-K filed after the effective date.`
+        : isFForm
+          ? `F-form (${selectedReg.form}) — Section 10(a)(3). Annual FS cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end. 9-month usability limit from effective date. IBR NOT automatic on F-1/F-4 without a forward IBR clause.`
+          : `Domestic non-shelf (${selectedReg.form}) — Section 10(a)(3) / Item 512. Two tests: (a) 16-month hard cap on audited FS fiscal year-end; (b) 9-month usability limit — after 9 months, prospectus unusable unless updated AND updated FS are as current as latest filed 10-K/10-Q. No forward IBR clause detected — a bare 10-Q filing does NOT update the prospectus; requires 424B supplement or effective POS AM.`;
 
     const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
       prompt: `Securities law compliance expert. This registration is ALREADY EFFECTIVE. Apply Section 10(a)(3) and Item 512 post-effectiveness currency analysis only. Rule 3-12 does NOT apply here.
