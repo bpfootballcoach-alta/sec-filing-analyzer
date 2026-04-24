@@ -764,9 +764,12 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       const unincorporatedQuarterlies = !isShelf ? quarterlies.filter(f => new Date(f.date) > liveProspectusBaselineDate) : [];
 
       if (!annualDateForQ) {
-        if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0) {
+        if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0 && daysSinceEffective > SECTION_10A3_9_MONTHS) {
           quarterlyStatus = "warn";
           quarterlyDetail = `INCORPORATION GAP: ${unincorporatedQuarterlies.length} 10-Q(s) filed after last prospectus update are NOT incorporated in the live prospectus. A 10-Q does not auto-update a non-shelf prospectus — incorporate via 424B3 or effective POS AM.`;
+        } else if (quarterlies.length > 0 && unincorporatedQuarterlies.length > 0) {
+          quarterlyStatus = "pass";
+          quarterlyDetail = `${quarterlies.length} 10-Q(s) filed on EDGAR (most recent: ${quarterlies[0].form} ${quarterlies[0].date}). ${unincorporatedQuarterlies.length} not yet incorporated, but within the 9-month window (effective ${daysSinceEffective} days ago) — no update required yet.`;
         } else if (quarterlies.length > 0) {
           quarterlyStatus = "pass";
           quarterlyDetail = `${quarterlies.length} 10-Q(s) filed and incorporated. No post-registration 10-K found.`;
@@ -780,9 +783,16 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       } else if (quartersFiledSinceAnnual < expectedQ) {
         quarterlyStatus = "fail";
         quarterlyDetail = `EDGAR FILING GAP: Only ${quartersFiledSinceAnnual} of ${expectedQ} expected 10-Q(s) filed since last 10-K (${latestAnnual.date}). ${expectedQ - quartersFiledSinceAnnual} report(s) missing — company may be delinquent.`;
-      } else if (!isShelf && unincorporatedQuarterlies.length > 0) {
+      } else if (!isShelf && unincorporatedQuarterlies.length > 0 && daysSinceEffective > SECTION_10A3_9_MONTHS) {
+        // Only flag incorporation gap as a problem AFTER the 9-month mark.
+        // Before 9 months, the prospectus can still be used without updating for newer 10-Qs
+        // (the 9-month clock check already handles this as a hard fail when past 9 months).
         quarterlyStatus = "warn";
         quarterlyDetail = `INCORPORATION GAP: ${quartersFiledSinceAnnual}/${expectedQ} 10-Qs current on EDGAR, but ${unincorporatedQuarterlies.length} filed after last prospectus update (${mostRecentEffectiveUpdate?.date || effectiveDate.toISOString().split("T")[0]}) are NOT in the live prospectus. Incorporate via 424B3 or effective POS AM. Most recent unincorporated: ${unincorporatedQuarterlies[0].form} ${unincorporatedQuarterlies[0].date}.`;
+      } else if (!isShelf && unincorporatedQuarterlies.length > 0) {
+        // Within 9 months — note the gap informally but not a current violation
+        quarterlyStatus = "pass";
+        quarterlyDetail = `${quartersFiledSinceAnnual}/${expectedQ} expected 10-Q(s) filed on EDGAR. ${unincorporatedQuarterlies.length} filed after last prospectus update are not yet incorporated, but Section 10(a)(3) does not require an update until after the 9-month mark (effective ${daysSinceEffective} days ago). No action required yet.`;
       } else {
         quarterlyStatus = "pass";
         quarterlyDetail = `${quartersFiledSinceAnnual}/${expectedQ} expected 10-Q(s) filed and incorporated. (No Q4 10-Q required — covered by 10-K.)`;
