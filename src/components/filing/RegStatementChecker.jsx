@@ -332,6 +332,44 @@ export default function RegStatementChecker() {
             </div>
           )}
 
+          {/* Prospectus Amendments & Updates by File Number */}
+          {detailResult.prospectusUpdates && detailResult.prospectusUpdates.length > 0 && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
+                <span className="text-sm font-semibold text-foreground">Prospectus Updates (POS AM & 424B)</span>
+                <span className="ml-2 text-xs text-muted-foreground">— {detailResult.prospectusUpdates.length} filing(s)</span>
+              </div>
+              <div className="px-4 py-3 space-y-3">
+                {detailResult.prospectusUpdates.map((update, i) => (
+                  <div key={i} className="border border-border/50 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">{update.form}</Badge>
+                        <span className="text-sm font-semibold text-foreground">{update.date}</span>
+                        <span className="text-xs text-muted-foreground">File #: {update.fileNumber || "—"}</span>
+                      </div>
+                      {update.url && (
+                        <a href={update.url} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="w-3.5 h-3.5 text-primary/60 hover:text-primary transition-colors" />
+                        </a>
+                      )}
+                    </div>
+                    {update.annualFSDate && (
+                      <div className="text-xs text-muted-foreground">
+                        <span className="font-semibold">Annual FS:</span> {update.annualFSDate}
+                      </div>
+                    )}
+                    {update.interimFSDate && (
+                      <div className="text-xs text-muted-foreground">
+                        <span className="font-semibold">Interim FS:</span> {update.interimFSDate}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Individual checks */}
           <div className="space-y-2">
             {detailResult.checks.map(check => (

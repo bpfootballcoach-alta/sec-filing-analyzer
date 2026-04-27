@@ -1181,12 +1181,22 @@ Provide 2-3 sentence verdict citing Section 10(a)(3) specifically. What is the p
       }
     });
 
+    // Build prospectus updates list (all 424B/POS AM for this file number)
+    const prospectusUpdates = allUpdatesWithThisFileNumber.map(f => ({
+      form: f.form,
+      date: f.date,
+      fileNumber: f.fileNumber,
+      url: edgarUrl(f),
+      accession: f.accession
+    }));
+
     return Response.json({
       mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
       registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
         daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
         annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
         securitiesRegistered: securitiesRegistered || null },
+      prospectusUpdates: prospectusUpdates.length > 0 ? prospectusUpdates : null,
       overallStatus, stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512",
       aiSummary: aiSummary || null, checks,
       checkedAt: new Date().toISOString(),
