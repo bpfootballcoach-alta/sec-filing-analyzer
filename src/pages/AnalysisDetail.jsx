@@ -295,110 +295,181 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
           </SectionCard>
         )}
 
-        {/* Financial Highlights */}
-        {analysis.financial_highlights && analysis.financial_highlights.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-            <h2 className="font-display text-xl font-semibold text-foreground mb-4">Financial Highlights</h2>
-            <MetricsGrid metrics={analysis.financial_highlights} />
-          </motion.div>
-        )}
+        {/* Dynamic sections based on filing data */}
+        {(() => {
+          const sections = [
+            {
+              key: "financial_highlights",
+              title: "Financial Highlights",
+              icon: BarChart3,
+              delay: 0.1,
+              condition: analysis.financial_highlights?.length > 0,
+              render: () => (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+                  <h2 className="font-display text-xl font-semibold text-foreground mb-4">Financial Highlights</h2>
+                  <MetricsGrid metrics={analysis.financial_highlights} />
+                </motion.div>
+              ),
+            },
+            {
+              key: "revenue",
+              title: "Revenue",
+              icon: DollarSign,
+              delay: 0.15,
+              condition: analysis.revenue_data,
+              gridCol: true,
+              component: RevenueBreakdown,
+              componentProps: { revenueData: analysis.revenue_data },
+              sourceModal: "total revenue, revenue segments, and revenue growth",
+            },
+            {
+              key: "profitability",
+              title: "Profitability",
+              icon: TrendingUp,
+              delay: 0.2,
+              condition: analysis.profitability,
+              gridCol: true,
+              component: ProfitabilityTable,
+              componentProps: { profitability: analysis.profitability },
+              sourceModal: "gross margin, operating margin, net margin, EBITDA, and earnings per share",
+            },
+            {
+              key: "balance_sheet",
+              title: "Balance Sheet",
+              icon: BarChart3,
+              delay: 0.25,
+              condition: analysis.balance_sheet,
+              gridCol: true,
+              component: BalanceSheetTable,
+              componentProps: { balanceSheet: analysis.balance_sheet },
+              sourceModal: "total assets, total liabilities, stockholders equity, cash and equivalents, and total debt",
+            },
+            {
+              key: "cash_flow",
+              title: "Cash Flow",
+              icon: Wallet,
+              delay: 0.3,
+              condition: analysis.cash_flow,
+              gridCol: true,
+              component: CashFlowTable,
+              componentProps: { cashFlow: analysis.cash_flow },
+              sourceModal: "operating cash flow, investing activities, financing activities, and free cash flow",
+            },
+          ];
 
-        {/* Two-column layout for detailed sections */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Revenue */}
-          <SectionCard title="Revenue" icon={DollarSign} delay={0.15}>
-            <RevenueBreakdown revenueData={analysis.revenue_data} />
-            {analysis.file_url && (
-              <div className="mt-3 pt-3 border-t border-border/40">
-                <SourceModal fileUrl={analysis.file_url} topic="total revenue, revenue segments, and revenue growth" label="Find in filing" />
-              </div>
-            )}
-          </SectionCard>
+          const activeSections = sections.filter(s => s.condition);
+          const gridSections = activeSections.filter(s => s.gridCol);
+          const fullWidthSections = activeSections.filter(s => !s.gridCol);
 
-          {/* Profitability */}
-          <SectionCard title="Profitability" icon={TrendingUp} delay={0.2}>
-            <ProfitabilityTable profitability={analysis.profitability} />
-            {analysis.file_url && (
-              <div className="mt-3 pt-3 border-t border-border/40">
-                <SourceModal fileUrl={analysis.file_url} topic="gross margin, operating margin, net margin, EBITDA, and earnings per share" label="Find in filing" />
-              </div>
-            )}
-          </SectionCard>
-
-          {/* Balance Sheet */}
-          <SectionCard title="Balance Sheet" icon={BarChart3} delay={0.25}>
-            <BalanceSheetTable balanceSheet={analysis.balance_sheet} />
-            {analysis.file_url && (
-              <div className="mt-3 pt-3 border-t border-border/40">
-                <SourceModal fileUrl={analysis.file_url} topic="total assets, total liabilities, stockholders equity, cash and equivalents, and total debt" label="Find in filing" />
-              </div>
-            )}
-          </SectionCard>
-
-          {/* Cash Flow */}
-          <SectionCard title="Cash Flow" icon={Wallet} delay={0.3}>
-            <CashFlowTable cashFlow={analysis.cash_flow} />
-            {analysis.file_url && (
-              <div className="mt-3 pt-3 border-t border-border/40">
-                <SourceModal fileUrl={analysis.file_url} topic="operating cash flow, investing activities, financing activities, and free cash flow" label="Find in filing" />
-              </div>
-            )}
-          </SectionCard>
-        </div>
-
-        {/* Financing Details */}
-        <SectionCard title="Financing & Capital Structure" icon={Landmark} delay={0.35}>
-          <FinancingDetails
-            financing={analysis.financing_data}
-            capitalStructure={analysis.capital_structure}
-            financingActivity={analysis.financing_activity}
-          />
-          {analysis.file_url && (
-            <div className="mt-3 pt-3 border-t border-border/40">
-              <SourceModal fileUrl={analysis.file_url} topic="capital structure, debt instruments, financing transactions, equity, and credit facilities" label="Find in filing" />
-            </div>
-          )}
-        </SectionCard>
-
-        {/* Key Insights */}
-        {analysis.key_insights && analysis.key_insights.length > 0 && (
-          <SectionCard title="Key Insights" icon={Lightbulb} delay={0.4}>
-            <div className="space-y-3">
-              {analysis.key_insights.map((insight, i) => (
-                <div key={i} className="flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <span className="text-xs font-bold text-accent">{i + 1}</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm text-muted-foreground leading-relaxed">{insight}</p>
-                    {analysis.file_url && (
-                      <div className="mt-1">
-                        <SourceModal fileUrl={analysis.file_url} topic={insight} label="Find source" />
-                      </div>
-                    )}
-                  </div>
+          return (
+            <>
+              {fullWidthSections.map(section => section.render?.())}
+              {gridSections.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {gridSections.map(section => {
+                    const Component = section.component;
+                    return (
+                      <SectionCard key={section.key} title={section.title} icon={section.icon} delay={section.delay}>
+                        <Component {...section.componentProps} />
+                        {analysis.file_url && (
+                          <div className="mt-3 pt-3 border-t border-border/40">
+                            <SourceModal fileUrl={analysis.file_url} topic={section.sourceModal} label="Find in filing" />
+                          </div>
+                        )}
+                      </SectionCard>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          </SectionCard>
-        )}
+              )}
+            </>
+          );
+        })()}
 
-        {/* Registration Currency Check */}
-        <SectionCard title="Registration Statement Currency" icon={ShieldCheck} delay={0.48}>
-          <RegistrationCurrencyCheck ticker={analysis.ticker} />
-        </SectionCard>
+        {/* Dynamic conditional sections */}
+        {(() => {
+          const sections = [
+            {
+              key: "financing",
+              title: "Financing & Capital Structure",
+              icon: Landmark,
+              delay: 0.35,
+              condition: analysis.financing_data || analysis.capital_structure || analysis.financing_activity,
+              render: () => (
+                <SectionCard title="Financing & Capital Structure" icon={Landmark} delay={0.35}>
+                  <FinancingDetails
+                    financing={analysis.financing_data}
+                    capitalStructure={analysis.capital_structure}
+                    financingActivity={analysis.financing_activity}
+                  />
+                  {analysis.file_url && (
+                    <div className="mt-3 pt-3 border-t border-border/40">
+                      <SourceModal fileUrl={analysis.file_url} topic="capital structure, debt instruments, financing transactions, equity, and credit facilities" label="Find in filing" />
+                    </div>
+                  )}
+                </SectionCard>
+              ),
+            },
+            {
+              key: "insights",
+              title: "Key Insights",
+              icon: Lightbulb,
+              delay: 0.4,
+              condition: analysis.key_insights?.length > 0,
+              render: () => (
+                <SectionCard title="Key Insights" icon={Lightbulb} delay={0.4}>
+                  <div className="space-y-3">
+                    {analysis.key_insights.map((insight, i) => (
+                      <div key={i} className="flex items-start gap-3">
+                        <div className="w-6 h-6 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <span className="text-xs font-bold text-accent">{i + 1}</span>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm text-muted-foreground leading-relaxed">{insight}</p>
+                          {analysis.file_url && (
+                            <div className="mt-1">
+                              <SourceModal fileUrl={analysis.file_url} topic={insight} label="Find source" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+              ),
+            },
+            {
+              key: "registration",
+              title: "Registration Statement Currency",
+              icon: ShieldCheck,
+              delay: 0.48,
+              condition: analysis.ticker,
+              render: () => (
+                <SectionCard title="Registration Statement Currency" icon={ShieldCheck} delay={0.48}>
+                  <RegistrationCurrencyCheck ticker={analysis.ticker} />
+                </SectionCard>
+              ),
+            },
+            {
+              key: "risks",
+              title: "Risk Factors",
+              icon: AlertTriangle,
+              delay: 0.5,
+              condition: analysis.risk_factors?.length > 0,
+              render: () => (
+                <SectionCard title="Risk Factors" icon={AlertTriangle} delay={0.5}>
+                  <RiskFactorsList risks={analysis.risk_factors} />
+                  {analysis.file_url && (
+                    <div className="mt-3 pt-3 border-t border-border/40">
+                      <SourceModal fileUrl={analysis.file_url} topic="risk factors" label="Find in filing" />
+                    </div>
+                  )}
+                </SectionCard>
+              ),
+            },
+          ];
 
-        {/* Risk Factors */}
-        {analysis.risk_factors && analysis.risk_factors.length > 0 && (
-          <SectionCard title="Risk Factors" icon={AlertTriangle} delay={0.5}>
-            <RiskFactorsList risks={analysis.risk_factors} />
-            {analysis.file_url && (
-              <div className="mt-3 pt-3 border-t border-border/40">
-                <SourceModal fileUrl={analysis.file_url} topic="risk factors" label="Find in filing" />
-              </div>
-            )}
-          </SectionCard>
-        )}
+          return sections.filter(s => s.condition).map(s => s.render());
+        })()}
 
         {/* AI Chat */}
         <motion.div
