@@ -169,10 +169,13 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     if (!selectedReg) return Response.json({ error: "Registration statement not found" }, { status: 404 });
 
     // ── Fetch securities registered from fee table ────────────────────────────
+    // ALWAYS extract this—it tells us what's ACTUALLY being registered
     let securitiesRegistered = null;
     try {
       const accNo = accession.replace(/-/g, "");
       let feeFilename = null;
+      
+      // Try JSON index first
       const jsonIdxRes = await fetch(
         `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.json`,
         { headers: HEADERS }
@@ -186,6 +189,8 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
           if (feeDoc) feeFilename = feeDoc.filename;
         }
       }
+      
+      // Fall back to HTML index
       if (!feeFilename) {
         const htmIdxRes = await fetch(
           `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
@@ -201,12 +206,31 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
           }
         }
       }
+      
+      // If no exhibit found, try the main registration document itself (cover page contains fee table on S-1/S-3/F-1)
+      if (!feeFilename) {
+        feeFilename = selectedReg.doc;
+      }
+      
       if (feeFilename) {
         const feeRes = await fetch(`https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${feeFilename}`, { headers: HEADERS });
         if (feeRes.ok) {
           const feeText = (await feeRes.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
           securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `Extract securities from this SEC filing fee table. Include security type, class, amount registered, price per unit, aggregate offering price. Note primary vs resale. Produce a short "label" (5-10 words). Fee table:\n${feeText.slice(0, 6000)}`,
+            prompt: `Extract ALL securities from this SEC filing fee table or cover page "Securities Being Registered" section. For EACH security class, extract:
+- security_class: e.g. "Class A Common Stock", "Warrants", "Preferred Stock"
+- offering_type: "Newly Registered" OR "For Resale" OR "Underlying" (for warrant exercise shares)
+- amount_registered: number of shares/units
+- price_per_unit: offering price per unit (may be null)
+- aggregate_offering_price: total offering amount (may be null)
+
+Also provide:
+- label: short summary (5-10 words) of what's being registered
+- summary: 1-2 sentence description of the offerings
+- total_aggregate_offering_price: sum of all offerings
+- offering_types: comma-separated list of offering categories present
+
+Fee table / cover page:\n${feeText.slice(0, 8000)}`,
             response_json_schema: {
               type: "object",
               properties: {
@@ -297,6 +321,9 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     // future Exchange Act filings automatically.
     // If such a forward IBR clause exists, subsequently filed 10-Ks and 10-Qs are
     // incorporated into the prospectus without a new 424B or POS AM.
+    // 
+    // CRITICAL: For non-shelf regs with NO 424B updates yet, the REG STATEMENT ITSELF
+    // is the live prospectus and must be parsed to extract the actual FS dates.
     let regIBRInfo = null; // will hold LLM-extracted IBR data from the registration document
     if (selectedReg?.doc) {
       try {
@@ -802,18 +829,24 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       // Non-shelf: The prospectusIncorporatedDate is the gold standard — extracted from the actual 
       // update document (424B or POS AM) via LLM parsing. It is the FISCAL YEAR-END of the FS 
       // incorporated by reference in that update, NOT the filing date.
-      // If prospectusIncorporatedDate is missing, we use filing date as a conservative proxy (actual year-end is earlier).
+      // If prospectusIncorporatedDate is missing, check the REG STATEMENT ITSELF for IBR info
+      // (for regs with no 424B/POS AM updates yet, the reg IS the live prospectus).
       // Forward IBR: latest annual is auto-incorporated.
       
       let annualFiscalYearEnd = null;
       let sourceInfo = null;
 
       if (prospectusIncorporatedDate) {
-        // BEST CASE: LLM extracted actual fiscal year-end from the prospectus supplement / POS AM document
+        // BEST CASE: LLM extracted actual fiscal year-end from prospectus supplement / POS AM
         annualFiscalYearEnd = prospectusIncorporatedDate;
         sourceInfo = `fiscal year-end ${prospectusIncorporatedDate} extracted from the live prospectus (${mostRecentEffectiveUpdate?.form} ${mostRecentEffectiveUpdate?.date})`;
+      } else if (!mostRecentEffectiveUpdate && regIBRInfo?.specific_annual_incorporated && /^\d{4}-\d{2}-\d{2}$/.test(regIBRInfo.specific_annual_incorporated)) {
+        // NO 424B/POS AM update exists: the REG STATEMENT ITSELF is the live prospectus
+        // Extract FS date from the reg's IBR section
+        annualFiscalYearEnd = regIBRInfo.specific_annual_incorporated;
+        sourceInfo = `fiscal year-end ${regIBRInfo.specific_annual_incorporated} incorporated by reference in the original ${selectedReg.form} registration statement (${selectedReg.date})`;
       } else if (hasForwardIBR && latestAnnual) {
-        // Forward IBR: latest annual report is auto-incorporated
+        // Forward IBR clause: latest annual report is auto-incorporated
         annualFiscalYearEnd = latestAnnual.date;
         sourceInfo = `${latestAnnual.form} filing date ${latestAnnual.date} — auto-incorporated via forward IBR clause`;
       } else if (mostRecentEffectiveUpdate && latestAnnual && new Date(latestAnnual.date) <= new Date(mostRecentEffectiveUpdate.date)) {
