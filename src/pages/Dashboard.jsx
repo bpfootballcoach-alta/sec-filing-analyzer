@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, BarChart3, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import FileUploader from "@/components/filing/FileUploader";
 import AnalysisCard from "@/components/filing/AnalysisCard";
 import RegStatementChecker from "@/components/filing/RegStatementChecker";
@@ -101,9 +102,12 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] });
       navigate(`/analysis/${recordId}`);
     },
-    onError: () => {
+    onError: (err) => {
       setIsProcessing(false);
       queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] });
+      const errMsg = err?.response?.data?.error || err?.message || "Failed to analyze filing";
+      toast.error(errMsg);
+      console.error("Analysis error:", err);
     },
   });
 
