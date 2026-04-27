@@ -61,15 +61,24 @@ export default function Dashboard() {
       });
 
       try {
-        // Pass the URL directly to the LLM — it can fetch SEC documents itself.
-        // For uploaded PDFs/files, use file_urls. For URLs, also use file_urls directly
-        // (avoids backend-to-SEC fetching which gets rate-limited/blocked by SEC).
-        const extractionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildExtractionPrompt(file_url, false, null),
-          response_json_schema: EXTRACTION_SCHEMA,
-          model: "gemini_3_flash",
-          file_urls: [file_url],
-        });
+        let extractionResult;
+        if (isUrl) {
+          // For SEC URLs: tell the LLM to fetch the URL directly via internet context
+          extractionResult = await base44.integrations.Core.InvokeLLM({
+            prompt: buildExtractionPrompt(file_url, true, null),
+            response_json_schema: EXTRACTION_SCHEMA,
+            model: "gemini_3_flash",
+            add_context_from_internet: true,
+          });
+        } else {
+          // For uploaded files: pass via file_urls
+          extractionResult = await base44.integrations.Core.InvokeLLM({
+            prompt: buildExtractionPrompt(file_url, false, null),
+            response_json_schema: EXTRACTION_SCHEMA,
+            model: "gemini_3_flash",
+            file_urls: [file_url],
+          });
+        }
 
         await base44.entities.FilingAnalysis.update(record.id, {
           ...extractionResult,

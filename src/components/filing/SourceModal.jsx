@@ -25,17 +25,23 @@ export default function SourceModal({ fileUrl, topic, label = "Source" }) {
     setError(null);
 
     try {
-      // Pass the filing URL directly to the LLM — it can fetch SEC documents itself
-      const llmRes = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are a financial document analyst. The user wants to find where "${topic}" is discussed in this SEC filing document.
+      // Determine if fileUrl is an uploaded file (base44 CDN) or a remote SEC URL
+      const isUploadedFile = fileUrl && (fileUrl.includes("base44") || fileUrl.startsWith("blob:") || /\.(pdf|htm|html)$/i.test(fileUrl) === false);
+      const llmParams = isUploadedFile
+        ? { file_urls: [fileUrl] }
+        : { add_context_from_internet: true };
 
-Find ALL relevant passages that directly support the data shown in the analysis for "${topic}". For each passage:
+      const llmRes = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are a financial document analyst. The user wants to find where "${topic}" is discussed in this SEC filing document at: ${fileUrl}
+
+Find ALL relevant passages that directly support the data shown for "${topic}". For each passage:
 1. Quote the EXACT text verbatim (up to 3-4 sentences).
-2. Identify the section heading it appears under (e.g. "Notes to Financial Statements", "Management's Discussion and Analysis", "Risk Factors").
-3. Estimate the approximate location as a percentage through the document (e.g. "~15% through the document").
+2. Identify the section heading it appears under.
+3. Estimate approximate location (e.g. "~15% through the document").
 
 Return up to 3 of the most relevant passages. If none found, say so clearly.`,
-        file_urls: [fileUrl],
+        model: "gemini_3_flash",
+        ...llmParams,
         response_json_schema: {
           type: "object",
           properties: {
