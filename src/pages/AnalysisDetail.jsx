@@ -37,6 +37,7 @@ import FinancingDetails from "@/components/filing/FinancingDetails";
 import NarrativeHighlights from "@/components/filing/NarrativeHighlights";
 import RegistrationCurrencyCheck from "@/components/filing/RegistrationCurrencyCheck";
 import SourceModal from "@/components/filing/SourceModal";
+import FilingAnalysisChat from "@/components/filing/FilingAnalysisChat";
 
 export default function AnalysisDetail() {
   const pathParts = window.location.pathname.split("/");
@@ -398,6 +399,15 @@ ${a.risk_factors?.length ? `<h2>Risk Factors</h2>${a.risk_factors.map(r=>`<div c
             )}
           </SectionCard>
         )}
+
+        {/* AI Chat */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.55 }}
+        >
+          <FilingAnalysisChat analysis={analysis} />
+        </motion.div>
       </main>
 
       {/* Footer spacer */}
