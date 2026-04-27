@@ -870,13 +870,26 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         }
       } else {
         const annualAge = daysSince(annualFiscalYearEnd);
-        if (annualAge > ANNUAL_LIMIT) {
+        const interimAge = prospectusInterimPeriodEndDate ? daysSince(prospectusInterimPeriodEndDate) : null;
+        const INTERIM_LIMIT = 274; // 9 months ≈ 274 days
+        
+        // Section 10(a)(3)(ii) is satisfied if EITHER annual or interim FS are current
+        const annualCurrent = annualAge <= ANNUAL_LIMIT;
+        const interimCurrent = interimAge !== null && interimAge <= INTERIM_LIMIT;
+        
+        if (!annualCurrent && !interimCurrent) {
+          // Both stale
           fsStatus = "fail";
           fsFailCode = "section_10a3_audited_fs_older_than_16_months";
-          fsDetail = `Section 10(a)(3)(ii): Audited FS in the live prospectus have ${sourceInfo}. This is ${annualAge} days old — exceeds the ${Math.round(ANNUAL_LIMIT/30)}-month hard cap. The prospectus FS are too stale. NOT CURRENT.`;
-        } else {
+          fsDetail = `Section 10(a)(3)(ii): Audited annual FS have ${sourceInfo}, ${annualAge} days old (exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit)${interimAge ? `. Interim FS (${prospectusInterimPeriodEndDate}) are ${interimAge} days old (exceeds 9-month limit)` : ""}. Neither are current. NOT CURRENT.`;
+        } else if (interimCurrent) {
+          // Interim current (this satisfies Section 10(a)(3)(ii))
           fsStatus = "pass";
-          fsDetail = `Section 10(a)(3)(ii): Audited FS in the live prospectus have ${sourceInfo}. This is ${annualAge} days old — within the ${Math.round(ANNUAL_LIMIT/30)}-month limit. FS currency OK.`;
+          fsDetail = `Section 10(a)(3)(ii): Interim FS as of ${prospectusInterimPeriodEndDate} are ${interimAge} days old — within 9-month limit. Section 10(a)(3)(ii) satisfied (interim FS currency does NOT require annual FS to be current). FS currency OK.`;
+        } else {
+          // Annual current, interim stale or missing
+          fsStatus = "pass";
+          fsDetail = `Section 10(a)(3)(ii): Audited annual FS have ${sourceInfo}, ${annualAge} days old — within ${Math.round(ANNUAL_LIMIT/30)}-month limit. FS currency OK.`;
         }
       }
     }
