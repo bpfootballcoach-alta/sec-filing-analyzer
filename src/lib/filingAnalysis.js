@@ -257,13 +257,34 @@ const FILING_INSTRUCTIONS = {
 - USE OF PROCEEDS: Exactly how the company plans to use IPO funds
 - KEY INSIGHTS: What makes this company compelling or concerning as a public investment?`,
 
+  "S-4": `This is a Merger/Business Combination Registration Statement (S-4). Extract ONLY what is in the document:
+- MERGER PARTICIPANTS: The acquiring company name (registrant) and target company name — EXACTLY as written in the document
+- MERGER STRUCTURE: What happens to each company? Will one be a subsidiary? Will target shareholders get shares in registrant?
+- MERGER CONSIDERATION: What are target shareholders receiving? Cash, stock, or combination? Total value if disclosed?
+- REGISTRANT DETAILS: Name, ticker, business description of the company filing the S-4
+- TARGET DETAILS: Name, business description, current shareholders (if disclosed)
+- FINANCING: How is the merger financed? Any debt arranged? Use of proceeds?
+- TIMELINE: Expected closing date, regulatory approvals required
+- FINANCIAL STATEMENTS: Historical financials of registrant and target (last 2 years + most recent interim period)
+- RISK FACTORS: Merger-specific risks, integration risks
+- KEY INSIGHTS: What is the strategic rationale? What concerns may investors have?
+
+CRITICAL ANTI-HALLUCINATION RULES:
+1. COMPANY NAMES: Extract EXACTLY as written on the cover page and first few pages. Do NOT invent, abbreviate, or alter names.
+2. MERGER STRUCTURE: Quote the exact language from the merger agreement summary or Item 4 describing what happens to each entity.
+3. MERGER CONSIDERATION: Use exact figures from Item 4 or the merger agreement summary. If you cannot find specific dollar amounts, say "not disclosed in this document."
+4. DO NOT guess or infer company names. If the document says "Coeptis Therapeutics Holdings, Inc." that is the ONLY name you use.
+5. If a company name appears differently in different places (e.g., cover vs. signature page), list all versions found and note where each appears.`,
+
   "DEFAULT": `Extract all available information from this filing, focusing on:
 - What type of event or disclosure this filing represents
-- All financial figures present in the document with exact values
+- All financial figures present in the document with exact values — cite the table or section where found
 - The narrative context: what management is saying, what happened, what it means
 - Any financing transactions, debt, or capital structure information disclosed
 - Risk factors and legal/regulatory matters
-- Key insights about what this filing reveals`,
+- Key insights about what this filing reveals
+
+CRITICAL: Do NOT invent information. If a specific data point does not exist in the document, leave it blank. Do NOT use prior knowledge or search results — ONLY what is in this specific document.`,
 };
 
 export function buildDetectionPrompt(fileRef, isUrl) {
@@ -394,10 +415,13 @@ FILING TYPE: ${filingType || "SEC filing"}
 
 CRITICAL RULES:
 1. Extract data ONLY from the document at the URL above — not from memory, not from web search results
-2. Do NOT leave any field blank if the information exists anywhere in the document
-3. Use EXACT figures from tables — include units (billions, millions, thousands, VND, USD, etc.)
-4. If figures appear in both local currency AND USD, capture both (e.g. "VND 39,411.7 billion (US$1,568.9 million)")
-5. For ALL financial tables: extract every row, every column, every period shown (current quarter, prior quarter, YoY)
+2. Do NOT invent, guess, or assume company names, merger details, or financial figures
+3. For COMPANY NAMES: Extract EXACTLY as written on the document's cover page and opening pages. Do NOT abbreviate or alter.
+4. For MERGER/TRANSACTION DETAILS: Quote exact language from Item 4 or the merger agreement summary. If details are unclear, say "unclear from document" rather than inferring
+5. Use EXACT figures from tables — include units (billions, millions, thousands, VND, USD, etc.) and cite the source section
+6. If figures appear in both local currency AND USD, capture both (e.g. "VND 39,411.7 billion (US$1,568.9 million)")
+7. For ALL financial tables: extract every row, every column, every period shown (current quarter, prior quarter, YoY)
+8. Leave fields BLANK (do not guess) if the information does not exist in this document
 
 ${instructions}
 
