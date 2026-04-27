@@ -63,12 +63,16 @@ export default function Dashboard() {
       try {
         let extractionResult;
         if (isUrl) {
-          // For SEC URLs: tell the LLM to fetch the URL directly via internet context
+          // For SEC URLs: fetch server-side (bypasses CORS/bot blocking), upload, then analyze via file_urls
+          const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
+          if (!fetchRes.data?.file_url) {
+            throw new Error(fetchRes.data?.error || "Failed to fetch filing from URL");
+          }
           extractionResult = await base44.integrations.Core.InvokeLLM({
-            prompt: buildExtractionPrompt(file_url, true, null),
+            prompt: buildExtractionPrompt(fetchRes.data.file_url, false, null),
             response_json_schema: EXTRACTION_SCHEMA,
             model: "gemini_3_flash",
-            add_context_from_internet: true,
+            file_urls: [fetchRes.data.file_url],
           });
         } else {
           // For uploaded files: pass via file_urls
