@@ -437,11 +437,8 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
         : false  // couldn't read doc — assume ongoing to be conservative
     );
 
-    const belongsToThisReg = (f, resolvedProspectusRef = null) => {
-      if (resolvedProspectusRef && f === resolvedProspectusRef) {
-        return !prospectusRegNumber || !regFileNumber || prospectusRegNumber === regFileNumber;
-      }
-      if (!regFileNumber || !f.fileNumber) return true;
+    const belongsToThisReg = (f) => {
+      if (!regFileNumber || !f.fileNumber) return false;
       return f.fileNumber === regFileNumber;
     };
 
@@ -460,40 +457,53 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
     );
     const latestProspectus = prospectuses[0] || null;
 
-    // Parse the latest prospectus document to extract fiscal year-end / period-end dates
-    // We measure staleness from FISCAL YEAR-END, not from the prospectus filing date
-    if (latestProspectus?.doc) {
+    // Parse ALL 424B/POS AM filings with the same file number to extract FS dates from tables
+    const allUpdatesWithThisFileNumber = subsequentFilings.filter(f =>
+      (PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) || POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim())) &&
+      belongsToThisReg(f)
+    );
+
+    for (const updateFiling of allUpdatesWithThisFileNumber) {
       try {
-        const prospUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${latestProspectus.accession.replace(/-/g, "")}/${latestProspectus.doc}`;
-        const prospRes = await fetch(prospUrl, { headers: HEADERS });
-        if (prospRes.ok) {
-          const prospText = await prospRes.text();
+        const updateUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${updateFiling.accession.replace(/-/g, "")}/${updateFiling.doc}`;
+        const updateRes = await fetch(updateUrl, { headers: HEADERS });
+        if (updateRes.ok) {
+          const updateText = await updateRes.text();
           const extracted = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `From this SEC prospectus supplement extract FOUR items:
-1. REGISTRATION FILE NUMBER (format "333-XXXXXX") that this prospectus updates. Look for "Registration Statement No. 333-XXXXXX" or "File No. 333-XXXXXX".
-2. ANNUAL FS FISCAL YEAR-END DATE: the balance-sheet date (end of fiscal year) of the most recent audited annual FS incorporated by reference. E.g. if "Annual Report on Form 10-K for the fiscal year ended December 31, 2024" → "2024-12-31". Do NOT use the 10-K filing date.
-3. ANNUAL FS FORM: "10-K" or "20-F".
-4. INTERIM FS PERIOD-END DATE: fiscal period-end of the most recent 10-Q or 6-K FS incorporated (e.g. "2024-09-30"). null if none.
-Return ONLY JSON: {"registration_number":..., "annual_fs_fiscal_year_end":..., "annual_fs_form":..., "interim_fs_period_end":...}
-Document (first 12000 chars):\n${prospText.slice(0, 12000)}`,
+            prompt: `Extract FS table dates from this SEC prospectus document:
+
+1. BALANCE_SHEET_DATES: Look for "Condensed Consolidated Balance Sheet" or "Balance Sheet" table headers. Extract ALL column dates shown (e.g. ["2024-03-31", "2023-12-31"]). Read the exact header text.
+2. INCOME_STATEMENT_DATES: Look for "Statement of Operations" or "Income Statement" table headers. Extract ALL period-end dates (e.g. ["2024-03-31", "2023-03-31"]).
+3. MOST_RECENT_INTERIM_DATE: The most recent non-annual (Q1, Q2, Q3) date from the tables. null if only annual.
+4. MOST_RECENT_ANNUAL_DATE: The most recent FY-end (December 31 or other year-end) from the tables. null if none.
+
+Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
             response_json_schema: {
               type: "object",
               properties: {
-                registration_number: { type: ["string", "null"] },
-                annual_fs_fiscal_year_end: { type: ["string", "null"] },
-                annual_fs_form: { type: ["string", "null"] },
-                interim_fs_period_end: { type: ["string", "null"] }
+                balance_sheet_dates: { type: "array", items: { type: "string" } },
+                income_statement_dates: { type: "array", items: { type: "string" } },
+                most_recent_interim_date: { type: ["string", "null"] },
+                most_recent_annual_date: { type: ["string", "null"] }
               }
             }
           });
-          if (extracted?.registration_number) prospectusRegNumber = extracted.registration_number;
-          if (extracted?.annual_fs_fiscal_year_end && /^\d{4}-\d{2}-\d{2}$/.test(extracted.annual_fs_fiscal_year_end))
-            prospectusIncorporatedDate = extracted.annual_fs_fiscal_year_end;
-          if (extracted?.annual_fs_form) prospectusIncorporatedForm = extracted.annual_fs_form;
-          if (extracted?.interim_fs_period_end && /^\d{4}-\d{2}-\d{2}$/.test(extracted.interim_fs_period_end))
-            prospectusInterimPeriodEndDate = extracted.interim_fs_period_end;
+
+          // Update prospectusIncorporatedDate if this filing has a more recent annual
+          if (extracted?.most_recent_annual_date && /^\d{4}-\d{2}-\d{2}$/.test(extracted.most_recent_annual_date)) {
+            if (!prospectusIncorporatedDate || new Date(extracted.most_recent_annual_date) > new Date(prospectusIncorporatedDate)) {
+              prospectusIncorporatedDate = extracted.most_recent_annual_date;
+            }
+          }
+
+          // Update prospectusInterimPeriodEndDate if this filing has a more recent interim
+          if (extracted?.most_recent_interim_date && /^\d{4}-\d{2}-\d{2}$/.test(extracted.most_recent_interim_date)) {
+            if (!prospectusInterimPeriodEndDate || new Date(extracted.most_recent_interim_date) > new Date(prospectusInterimPeriodEndDate)) {
+              prospectusInterimPeriodEndDate = extracted.most_recent_interim_date;
+            }
+          }
         }
-      } catch (_) { /* fall back to metadata */ }
+      } catch (_) { /* continue to next filing */ }
     }
 
     const annuals = subsequentFilings.filter(f =>
