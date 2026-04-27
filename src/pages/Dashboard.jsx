@@ -60,32 +60,34 @@ export default function Dashboard() {
         status: "processing",
       });
 
-      // Determine how to pass the document to the LLM
-      // PDFs → file_urls + response_json_schema (gemini_3_flash)
-      // HTML URLs → add_context_from_internet (gemini_3_1_pro) but gemini does NOT support
-      // response_json_schema with search. So for URLs we ask for JSON in the prompt and parse it.
-      // Resolve the file URL — for non-PDF URLs, fetch and re-upload as .html first
-      let analysisUrl = file_url;
-      if (!file_url.toLowerCase().endsWith(".pdf")) {
-        const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
-        analysisUrl = fetchRes.data?.file_url;
-        if (!analysisUrl) {
-          throw new Error(fetchRes.data?.error || "Failed to fetch the filing from the provided URL");
+      try {
+        // Resolve the file URL — for non-PDF URLs, fetch and re-upload as .html first
+        let analysisUrl = file_url;
+        if (!file_url.toLowerCase().endsWith(".pdf")) {
+          const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
+          analysisUrl = fetchRes.data?.file_url;
+          if (!analysisUrl) {
+            throw new Error(fetchRes.data?.error || "Failed to fetch the filing from the provided URL");
+          }
         }
+
+        // Single LLM call — extract everything at once
+        const extractionResult = await base44.integrations.Core.InvokeLLM({
+          prompt: buildExtractionPrompt(analysisUrl, false, null),
+          response_json_schema: EXTRACTION_SCHEMA,
+          model: "gemini_3_flash",
+          file_urls: [analysisUrl],
+        });
+
+        await base44.entities.FilingAnalysis.update(record.id, {
+          ...extractionResult,
+          status: "completed",
+        });
+      } catch (err) {
+        // Mark as failed so the user can see it and delete it — don't leave it stuck as "processing"
+        await base44.entities.FilingAnalysis.update(record.id, { status: "failed" });
+        throw err;
       }
-
-      // Single LLM call — extract everything at once (detection fields are part of EXTRACTION_SCHEMA)
-      const extractionResult = await base44.integrations.Core.InvokeLLM({
-        prompt: buildExtractionPrompt(analysisUrl, false, null),
-        response_json_schema: EXTRACTION_SCHEMA,
-        model: "gemini_3_flash",
-        file_urls: [analysisUrl],
-      });
-
-      await base44.entities.FilingAnalysis.update(record.id, {
-        ...extractionResult,
-        status: "completed",
-      });
 
       return record.id;
     },
@@ -96,6 +98,7 @@ export default function Dashboard() {
     },
     onError: () => {
       setIsProcessing(false);
+      queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] });
     },
   });
 
