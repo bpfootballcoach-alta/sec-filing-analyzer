@@ -361,57 +361,47 @@ Fee table / cover page:\n${feeText.slice(0, 8000)}`,
           const offeringSnippet = plainText.slice(0, 5000) + "\n\n" + plainText.slice(-3000);
 
           const ibr = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `You are reviewing extracted sections of an SEC registration statement. Determine:
+            prompt: `You are reviewing an SEC registration statement. Extract:
 
-1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section listing Exchange Act reports? (true/false)
-   These do NOT count: exhibit cross-references ("incorporated by reference to Exhibit 3.1"), Item 512 boilerplate, generic "where you can find more information" links, XBRL metadata.
+1. BALANCE_SHEET_DATES: Look for "Condensed Consolidated Balance Sheet" or balance sheet table headers. Extract ALL column dates shown. Format: array of "YYYY-MM-DD" strings (e.g. ["2024-03-31", "2023-12-31"]). This is CRITICAL — read the table column headers exactly.
 
-2. FORWARD_IBR: Does the text contain a FORWARD/AUTOMATIC IBR clause incorporating ALL FUTURE Exchange Act filings (10-K, 10-Q, 8-K) after the effective date? (true/false)
-   MUST be explicit language like: "all documents subsequently filed by the registrant pursuant to Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act prior to the termination of this offering shall be deemed incorporated by reference."
-   Exhibit cross-references and Item 512 boilerplate are NOT forward IBR clauses.
+2. INCOME_STATEMENT_DATES: Look for income statement table headers. Extract ALL period-end dates shown. Format: array of "YYYY-MM-DD" strings.
 
-3. FORWARD_IBR_QUOTE: Exact verbatim sentence if FORWARD_IBR=true, else null.
-4. FORWARD_IBR_SECTION_HEADING: Heading of section containing forward IBR, else null.
-5. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of specifically named annual report in a true IBR section, else null.
-6. SPECIFIC_ANNUAL_FORM: "10-K" or "20-F" or null.
-7. SPECIFIC_INTERIM_INCORPORATED: Period-end (YYYY-MM-DD) of specifically named 10-Q/6-K, else null.
-8. SPECIFIC_DOCS_LIST: Array of Exchange Act reports in a true IBR section. Empty array if only exhibit cross-references.
-9. IBR_SUMMARY: 1-2 sentence factual summary. If no true IBR section: "No dedicated Incorporation by Reference section found. The document only contains standard exhibit cross-references."
-10. IS_ONGOING_OFFERING: (true/false) Is the prospectus for an ONGOING offering where the prospectus will CONTINUE to be used AFTER the initial transaction closes?
+3. MOST_RECENT_INTERIM_DATE: The most recent non-annual period-end in the FS (e.g. 2024-03-31 for Q1). null if only annual FS present.
 
-CRITICAL RULE — default to TRUE (ongoing) unless ALL of the following are satisfied:
-  (a) The ONLY securities registered are merger consideration shares (common stock/cash issued as merger consideration in a business combination vote), AND
-  (b) There are NO warrants registered (whether public warrants, private placement warrants, or any shares issuable upon warrant exercise), AND
-  (c) There is NO resale component (no selling shareholders, no resale by holders), AND
-  (d) The document does NOT contain undertakings to file post-effective amendments for Section 10(a)(3) purposes (which would only appear if there is an ongoing offering requiring prospectus currency), AND
-  (e) The warrant agreement (if any) does NOT require maintaining an effective registration statement and current prospectus post-merger.
+4. MOST_RECENT_ANNUAL_DATE: The most recent annual (FY-end) date in the FS (e.g. 2023-12-31). null if none.
 
-If ANY warrants or warrant shares are registered, IS_ONGOING_OFFERING MUST be true. A SPAC or merger S-4/F-4 that also registers warrant shares or covers warrant exercises is NOT a pure one-time transaction document — the warrant exercise component is an ongoing Securities Act use case post-merger.
+5. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section? (true/false)
 
-Examples that ARE ongoing (return true): warrant exercise offers, continuous resale, employee benefit plans, ANY S-4/F-4 that also registers warrants or warrant shares.
-Examples that are NOT ongoing (return false ONLY if ALL five conditions above are satisfied): a pure merger vote proxy/prospectus where ONLY merger consideration shares are issued and there are no warrants, no resale, no ongoing offering of any kind.
+6. FORWARD_IBR: Does it contain automatic forward IBR language for future Exchange Act filings? (true/false)
 
-11. ONGOING_OFFERING_REASON: 1-2 sentences explaining exactly why you concluded IS_ONGOING_OFFERING is true or false, citing the specific securities registered and any warrant or resale component found.
+7. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of specifically NAMED 10-K/20-F in IBR, else null.
 
-Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE / OFFERING TYPE CONTEXT:\n${offeringSnippet.slice(0, 3000)}`,
+8. IS_ONGOING_OFFERING: (true/false) Is this prospectus for ongoing offers? Return TRUE if warrants, resale, or continuous offerings are registered. Return FALSE only if ONLY merger consideration shares, NO warrants, NO resale.
+
+Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringSnippet.slice(0, 3000)}`,
             response_json_schema: {
               type: "object",
               properties: {
+                balance_sheet_dates: { type: "array", items: { type: "string" } },
+                income_statement_dates: { type: "array", items: { type: "string" } },
+                most_recent_interim_date: { type: ["string", "null"] },
+                most_recent_annual_date: { type: ["string", "null"] },
                 has_ibr_section: { type: "boolean" },
                 forward_ibr: { type: "boolean" },
-                forward_ibr_quote: { type: ["string", "null"] },
-                forward_ibr_section_heading: { type: ["string", "null"] },
                 specific_annual_incorporated: { type: ["string", "null"] },
-                specific_annual_form: { type: ["string", "null"] },
-                specific_interim_incorporated: { type: ["string", "null"] },
-                specific_docs_list: { type: "array", items: { type: "string" } },
-                ibr_summary: { type: ["string", "null"] },
-                is_ongoing_offering: { type: "boolean" },
-                ongoing_offering_reason: { type: ["string", "null"] }
+                is_ongoing_offering: { type: "boolean" }
               }
             }
           });
           regIBRInfo = ibr;
+          // Update prospectus dates from actual FS in the reg document
+          if (ibr?.most_recent_interim_date && /^\d{4}-\d{2}-\d{2}$/.test(ibr.most_recent_interim_date)) {
+            prospectusInterimPeriodEndDate = ibr.most_recent_interim_date;
+          }
+          if (ibr?.most_recent_annual_date && /^\d{4}-\d{2}-\d{2}$/.test(ibr.most_recent_annual_date)) {
+            prospectusIncorporatedDate = ibr.most_recent_annual_date;
+          }
           // If the reg doc itself incorporates a specific annual by reference, use that date
           if (ibr?.specific_annual_incorporated && /^\d{4}-\d{2}-\d{2}$/.test(ibr.specific_annual_incorporated)) {
             prospectusIncorporatedDate = prospectusIncorporatedDate || ibr.specific_annual_incorporated;
