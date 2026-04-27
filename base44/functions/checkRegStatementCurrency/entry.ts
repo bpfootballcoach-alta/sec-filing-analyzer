@@ -799,18 +799,48 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         }
       }
     } else {
-      // Non-shelf: fiscal year-end from LLM extraction, or update document date as proxy.
-      // If forward IBR is present, the latest annual report IS auto-incorporated even without a 424B/POS AM.
-      const annualFiscalYearEnd = prospectusIncorporatedDate ||
-        (hasForwardIBR && latestAnnual?.date) ||
-        latestPostEffective?.date || latestProspectus?.date || null;
+      // Non-shelf: The prospectusIncorporatedDate is the gold standard — extracted from the actual 
+      // update document (424B or POS AM) via LLM parsing. It is the FISCAL YEAR-END of the FS 
+      // incorporated by reference in that update, NOT the filing date.
+      // If prospectusIncorporatedDate is missing, we use filing date as a conservative proxy (actual year-end is earlier).
+      // Forward IBR: latest annual is auto-incorporated.
+      
+      let annualFiscalYearEnd = null;
+      let sourceInfo = null;
+
+      if (prospectusIncorporatedDate) {
+        // BEST CASE: LLM extracted actual fiscal year-end from the prospectus supplement / POS AM document
+        annualFiscalYearEnd = prospectusIncorporatedDate;
+        sourceInfo = `fiscal year-end ${prospectusIncorporatedDate} extracted from the live prospectus (${mostRecentEffectiveUpdate?.form} ${mostRecentEffectiveUpdate?.date})`;
+      } else if (hasForwardIBR && latestAnnual) {
+        // Forward IBR: latest annual report is auto-incorporated
+        annualFiscalYearEnd = latestAnnual.date;
+        sourceInfo = `${latestAnnual.form} filing date ${latestAnnual.date} — auto-incorporated via forward IBR clause`;
+      } else if (mostRecentEffectiveUpdate && latestAnnual && new Date(latestAnnual.date) <= new Date(mostRecentEffectiveUpdate.date)) {
+        // Latest annual is on or before the last update — use latest annual's date
+        annualFiscalYearEnd = latestAnnual.date;
+        sourceInfo = `${latestAnnual.form} filing date ${latestAnnual.date}`;
+      } else if (mostRecentEffectiveUpdate) {
+        // Last resort: use the filing date of the most recent update (424B or POS AM) as conservative proxy
+        // IMPORTANT: This is a conservative lower bound. The actual fiscal year-end is earlier.
+        annualFiscalYearEnd = mostRecentEffectiveUpdate.date;
+        sourceInfo = `${mostRecentEffectiveUpdate.form} filing date ${mostRecentEffectiveUpdate.date} (conservative proxy—actual fiscal year-end is earlier)`;
+      } else if (latestAnnual) {
+        // No update after registration, but annual exists
+        annualFiscalYearEnd = latestAnnual.date;
+        sourceInfo = `${latestAnnual.form} filing date ${latestAnnual.date}`;
+      } else {
+        // Fall back to original registration
+        annualFiscalYearEnd = selectedReg.date;
+        sourceInfo = `Original registration filing date ${selectedReg.date}`;
+      }
 
       if (!annualFiscalYearEnd) {
         const regAge = daysSince(selectedReg.date);
         if (regAge > ANNUAL_LIMIT) {
           fsStatus = "fail";
           fsFailCode = "section_10a3_audited_fs_older_than_16_months";
-          fsDetail = `Section 10(a)(3)(ii): No 424B supplement or effective POS AM found. Original registration FS from ${selectedReg.date} are ${regAge} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit. NOT CURRENT.`;
+          fsDetail = `Section 10(a)(3)(ii): No financial statements can be located. Original registration FS from ${selectedReg.date} are ${regAge} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit. NOT CURRENT.`;
         } else {
           fsStatus = "pass";
           fsDetail = `Section 10(a)(3)(ii): No 424B or POS AM found. Original registration FS from ${selectedReg.date} are ${regAge} days old — within ${Math.round(ANNUAL_LIMIT/30)}-month cap. See 9-month usability check below.`;
@@ -820,16 +850,10 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         if (annualAge > ANNUAL_LIMIT) {
           fsStatus = "fail";
           fsFailCode = "section_10a3_audited_fs_older_than_16_months";
-          const src = prospectusIncorporatedDate ? `(fiscal year-end from prospectus document)` : `(document date used as proxy — actual fiscal year-end is earlier)`;
-          fsDetail = `Section 10(a)(3)(ii): Audited FS fiscal year-end ${annualFiscalYearEnd} ${src} is ${annualAge} days old — exceeds ${Math.round(ANNUAL_LIMIT/30)}-month limit. NOT CURRENT.`;
+          fsDetail = `Section 10(a)(3)(ii): Audited FS in the live prospectus have ${sourceInfo}. This is ${annualAge} days old — exceeds the ${Math.round(ANNUAL_LIMIT/30)}-month hard cap. The prospectus FS are too stale. NOT CURRENT.`;
         } else {
           fsStatus = "pass";
-          const src = prospectusIncorporatedDate
-            ? `Fiscal year-end from ${latestProspectus?.form || "prospectus"} ${latestProspectus?.date}.`
-            : (hasForwardIBR && latestAnnual?.date)
-              ? `${latestAnnual.form} (${latestAnnual.date}) auto-incorporated via forward IBR clause.`
-              : `${latestPostEffective?.form || latestProspectus?.form || "update"} date used as conservative proxy.`;
-          fsDetail = `Section 10(a)(3)(ii): Audited FS fiscal year-end ${annualFiscalYearEnd} is ${annualAge} days old — within ${Math.round(ANNUAL_LIMIT/30)}-month limit. ${src}`;
+          fsDetail = `Section 10(a)(3)(ii): Audited FS in the live prospectus have ${sourceInfo}. This is ${annualAge} days old — within the ${Math.round(ANNUAL_LIMIT/30)}-month limit. FS currency OK.`;
         }
       }
     }
