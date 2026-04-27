@@ -33,13 +33,23 @@ Deno.serve(async (req) => {
     // Resolve the actual document URL (handles SEC EDGAR /ix?doc= viewer URLs)
     const resolvedUrl = resolveEdgarUrl(url);
 
-    // Fetch the filing from SEC EDGAR
-    const res = await fetch(resolvedUrl, {
-      headers: {
-        "User-Agent": "SEC-Filing-Analyzer contact@example.com",
-        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-      },
-    });
+    // Fetch the filing from SEC EDGAR with retries (SEC can 503 on first hit)
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const SEC_HEADERS = {
+      "User-Agent": "Research Tool legal-research@example.com",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Connection": "keep-alive",
+    };
+
+    let res;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await sleep(2000 * attempt); // 2s, then 4s
+      res = await fetch(resolvedUrl, { headers: SEC_HEADERS });
+      if (res.ok) break;
+      if (res.status !== 503 && res.status !== 429) break; // only retry on rate-limit errors
+    }
 
     if (!res.ok) {
       return Response.json({ error: `Failed to fetch URL: ${res.status} ${res.statusText}` }, { status: 502 });

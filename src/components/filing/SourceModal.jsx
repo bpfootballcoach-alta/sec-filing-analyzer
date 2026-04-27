@@ -25,12 +25,7 @@ export default function SourceModal({ fileUrl, topic, label = "Source" }) {
     setError(null);
 
     try {
-      // Step 1: upload the filing HTML so the LLM can read it
-      const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: fileUrl });
-      const uploadedUrl = fetchRes.data?.file_url;
-      if (!uploadedUrl) throw new Error("Could not fetch filing document.");
-
-      // Step 2: ask LLM to find the relevant passage(s) and approximate page/section
+      // Pass the filing URL directly to the LLM — it can fetch SEC documents itself
       const llmRes = await base44.integrations.Core.InvokeLLM({
         prompt: `You are a financial document analyst. The user wants to find where "${topic}" is discussed in this SEC filing document.
 
@@ -40,7 +35,7 @@ Find ALL relevant passages that directly support the data shown in the analysis 
 3. Estimate the approximate location as a percentage through the document (e.g. "~15% through the document").
 
 Return up to 3 of the most relevant passages. If none found, say so clearly.`,
-        file_urls: [uploadedUrl],
+        file_urls: [fileUrl],
         response_json_schema: {
           type: "object",
           properties: {

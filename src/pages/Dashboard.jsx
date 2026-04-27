@@ -61,22 +61,14 @@ export default function Dashboard() {
       });
 
       try {
-        // Resolve the file URL — for non-PDF URLs, fetch and re-upload as .html first
-        let analysisUrl = file_url;
-        if (!file_url.toLowerCase().endsWith(".pdf")) {
-          const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
-          analysisUrl = fetchRes.data?.file_url;
-          if (!analysisUrl) {
-            throw new Error(fetchRes.data?.error || "Failed to fetch the filing from the provided URL");
-          }
-        }
-
-        // Single LLM call — extract everything at once
+        // Pass the URL directly to the LLM — it can fetch SEC documents itself.
+        // For uploaded PDFs/files, use file_urls. For URLs, also use file_urls directly
+        // (avoids backend-to-SEC fetching which gets rate-limited/blocked by SEC).
         const extractionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildExtractionPrompt(analysisUrl, false, null),
+          prompt: buildExtractionPrompt(file_url, false, null),
           response_json_schema: EXTRACTION_SCHEMA,
           model: "gemini_3_flash",
-          file_urls: [analysisUrl],
+          file_urls: [file_url],
         });
 
         await base44.entities.FilingAnalysis.update(record.id, {
