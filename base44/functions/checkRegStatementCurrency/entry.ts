@@ -713,33 +713,54 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
         // The registration's audited FS cover the fiscal year ended around the prior annual's period.
         // Rule 3-12 requires that those FS not be stale as of the anticipated effectiveness date.
         // We use TODAY as the proxy for the anticipated effective date (conservative).
-        // Stale = more than rule312Days since the fiscal year-end date (we use the filing date as a proxy
-        // since we cannot read the actual period-end from EDGAR metadata alone).
-        const priorAnnualAge = daysSince(latestPriorAnnual.date);
+        //
+        // BEST CASE: use the actual fiscal year-end date extracted by LLM from the registration document
+        // itself (regIBRInfo.most_recent_annual_date). This is the correct date to measure staleness from.
+        // FALLBACK: use the 10-K filing date as a conservative proxy (filing date > fiscal year-end,
+        // so this slightly overstates staleness — safe but may produce false warnings).
+        const fsAnnualDate = (regIBRInfo?.most_recent_annual_date && /^\d{4}-\d{2}-\d{2}$/.test(regIBRInfo.most_recent_annual_date))
+          ? regIBRInfo.most_recent_annual_date
+          : latestPriorAnnual.date;
+        const fsInterimDate = (regIBRInfo?.most_recent_interim_date && /^\d{4}-\d{2}-\d{2}$/.test(regIBRInfo.most_recent_interim_date))
+          ? regIBRInfo.most_recent_interim_date
+          : null;
+        const priorAnnualAge = daysSince(fsAnnualDate);
 
-        // Grace window check: audited year-end FS must be included if available before effectiveness
-        // (i.e., if a new fiscal year ended and audited FS are available, they must be included)
-        const latestPriorAnnualDate = new Date(latestPriorAnnual.date);
+        // Grace window check: audited year-end FS must be included if available before effectiveness.
+        // Two cases:
+        //   (a) A newer 10-K was filed AFTER the registration date (annuals.length > 0), OR
+        //   (b) The 10-K filed BEFORE the reg date is newer than the FS in the reg document
+        //       (i.e., the S-1 was filed with stale FS even though a newer 10-K already existed)
+        const newerAnnualAlreadyFiled = fsAnnualDate !== latestPriorAnnual.date &&
+          new Date(latestPriorAnnual.date) > new Date(fsAnnualDate);
         const isAuditedFSAvailableBeforeEffectiveness =
-          // If the most recent 10-K was filed after the registration date, a new annual is available
-          annuals.length > 0;
+          annuals.length > 0 || newerAnnualAlreadyFiled;
+        // Identify the most current available annual for the error message
+        const mostCurrentAvailableAnnual = annuals[0] || (newerAnnualAlreadyFiled ? latestPriorAnnual : null);
 
         let r312Status, r312Detail;
 
+        const fsDateSource = fsAnnualDate !== latestPriorAnnual.date
+          ? `fiscal year-end ${fsAnnualDate} (from FS in registration document)`
+          : `${annualFormLabel} filing date ${latestPriorAnnual.date} (proxy — actual year-end is earlier)`;
+
         if (priorAnnualAge > rule312Days) {
           r312Status = "fail";
-          r312Detail = `Rule 3-12 (pre-effectiveness): The most recent ${annualFormLabel} (${latestPriorAnnual.date}) is ${priorAnnualAge} days old. The applicable threshold is ${rule312Days} days (${rule312Basis}). The financial statements in this registration statement may be too stale to support effectiveness — a Rule 3-12 update (amendment with refreshed FS) is required before the SEC can declare the registration effective.`;
+          r312Detail = `Rule 3-12 (pre-effectiveness): Audited FS in the registration statement have fiscal year-end ${fsAnnualDate} — ${priorAnnualAge} days ago. The applicable threshold is ${rule312Days} days (${rule312Basis}). The financial statements may be too stale to support effectiveness — a Rule 3-12 update (amendment with refreshed FS) is required before the SEC can declare the registration effective.`;
         } else {
           r312Status = "pass";
-          r312Detail = `Rule 3-12 (pre-effectiveness): The most recent ${annualFormLabel} (${latestPriorAnnual.date}) is ${priorAnnualAge} days old — within the ${rule312Days}-day threshold (${rule312Basis}). Financial statements appear current for pre-effectiveness purposes as of today.`;
+          r312Detail = `Rule 3-12 (pre-effectiveness): Audited FS fiscal year-end ${fsAnnualDate} (${fsDateSource}) is ${priorAnnualAge} days ago — within the ${rule312Days}-day threshold (${rule312Basis}). Financial statements appear current for pre-effectiveness purposes as of today.`;
         }
 
-        // If a newer annual report is available (filed after the reg was submitted), flag it
-        if (isAuditedFSAvailableBeforeEffectiveness && r312Status === "pass") {
-          r312Status = "warn";
-          r312Detail += ` However, a newer ${annuals[0].form} (${annuals[0].date}) was filed after this registration was submitted — Rule 3-12 requires that if audited year-end FS are available before effectiveness, they must be included. An amendment incorporating the newer ${annuals[0].form} may be required before the SEC declares the registration effective.`;
-        } else if (isAuditedFSAvailableBeforeEffectiveness) {
-          r312Detail += ` A newer ${annuals[0].form} (${annuals[0].date}) is also available and must be included before effectiveness.`;
+        // If a more current annual report is available (either filed after submission, or was already
+        // filed before submission but not yet included in the registration), flag it.
+        if (isAuditedFSAvailableBeforeEffectiveness && mostCurrentAvailableAnnual) {
+          if (r312Status === "pass") {
+            r312Status = "warn";
+            r312Detail += ` However, a more current ${mostCurrentAvailableAnnual.form} (${mostCurrentAvailableAnnual.date}) is available and has NOT been incorporated into this registration — Rule 3-12 requires that if audited year-end FS are available before effectiveness, they must be included. An amendment incorporating the ${mostCurrentAvailableAnnual.form} is required before the SEC can declare the registration effective.`;
+          } else {
+            r312Detail += ` Additionally, a more current ${mostCurrentAvailableAnnual.form} (${mostCurrentAvailableAnnual.date}) exists on EDGAR and must be incorporated into the registration via amendment before effectiveness.`;
+          }
         }
 
         checks.push({
@@ -750,19 +771,24 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
           filingDate: latestPriorAnnual.date, filingUrl: edgarUrl(latestPriorAnnual), filingForm: latestPriorAnnual.form,
         });
 
-        // Interim assessment under Rule 3-12
-        if (latestPriorQuarterly) {
-          const priorQAge = daysSince(latestPriorQuarterly.date);
+        // Interim assessment under Rule 3-12 — use LLM-extracted interim date if available
+        const interimCheckDate = fsInterimDate || latestPriorQuarterly?.date || null;
+        const interimCheckForm = latestPriorQuarterly?.form || "10-Q";
+        if (interimCheckDate) {
+          const priorQAge = daysSince(interimCheckDate);
           const interimThreshold = 134; // Rule 3-12: interim FS must not be more than ~4.5 months (135 days) old
           const interimStatus = priorQAge > interimThreshold ? "warn" : "pass";
+          const interimDateSource = fsInterimDate && fsInterimDate !== latestPriorQuarterly?.date
+            ? `interim period-end ${interimCheckDate} (from FS in registration document)`
+            : `${interimCheckForm} filed ${interimCheckDate}`;
           checks.push({
             id: "rule312_interim_preeffective",
             label: "Rule 3-12 Pre-Effectiveness — Interim Financial Statement Currency",
             status: interimStatus,
             detail: interimStatus === "warn"
-              ? `Most recent ${latestPriorQuarterly.form} (${latestPriorQuarterly.date}) is ${priorQAge} days old — may be too stale to include as the most current interim period before effectiveness. Review whether a more recent interim period should be reflected in the registration.`
-              : `Most recent ${latestPriorQuarterly.form} (${latestPriorQuarterly.date}) is ${priorQAge} days old — appears current for pre-effectiveness interim financial statement purposes.`,
-            filingDate: latestPriorQuarterly.date, filingUrl: edgarUrl(latestPriorQuarterly), filingForm: latestPriorQuarterly.form,
+              ? `Most recent interim FS in the registration have period-end ${interimCheckDate} (${interimDateSource}) — ${priorQAge} days ago. This may be too stale as the most current interim period before effectiveness. Review whether a more recent interim period should be reflected in the registration.`
+              : `Most recent interim FS in the registration have period-end ${interimCheckDate} (${interimDateSource}) — ${priorQAge} days ago. Appears current for pre-effectiveness interim financial statement purposes.`,
+            filingDate: latestPriorQuarterly?.date || null, filingUrl: edgarUrl(latestPriorQuarterly), filingForm: interimCheckForm,
           });
         }
       }
