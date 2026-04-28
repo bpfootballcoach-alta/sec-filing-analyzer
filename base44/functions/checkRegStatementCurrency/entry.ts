@@ -305,8 +305,62 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
           // Strip HTML tags and collapse whitespace to get readable text
           const plainText = regDocText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
+          // ── Direct regex extraction of FS dates from plain text ───────────────
+          // Strategy: find "BALANCE SHEET" or "BALANCE SHEETS" header occurrences,
+          // then scan the surrounding text (±600 chars) for date patterns like
+          // "December 31, 2025" or "March 31, 2025". These are the column headers
+          // in the actual financial tables and are the authoritative FS period dates.
+          const MONTH_MAP = { january:1, february:2, march:3, april:4, may:5, june:6,
+            july:7, august:8, september:9, october:10, november:11, december:12 };
+          const todayStr = new Date().toISOString().slice(0,10); // e.g. "2026-04-28"
+
+          const extractDatesNear = (text, keywordRegex, windowSize = 600) => {
+            const dates = new Set();
+            const localDatePat = /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d{2})\b/gi;
+            let km;
+            const pat = new RegExp(keywordRegex.source, "gi");
+            while ((km = pat.exec(text)) !== null) {
+              const snippet = text.slice(Math.max(0, km.index - 100), Math.min(text.length, km.index + windowSize));
+              let dm;
+              const lp = new RegExp(localDatePat.source, "gi");
+              while ((dm = lp.exec(snippet)) !== null) {
+                const mon = MONTH_MAP[dm[1].toLowerCase()];
+                const day = parseInt(dm[2]);
+                const yr = parseInt(dm[3]);
+                const iso = `${yr}-${String(mon).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+                // Only accept past/current dates, not future ones (excludes legal instrument maturity dates etc.)
+                if (yr >= 2018 && iso <= todayStr) dates.add(iso);
+              }
+            }
+            return [...dates].sort((a,b) => b.localeCompare(a));
+          };
+
+          // Primary: dates near balance sheet headers (most reliable)
+          const bsDates = extractDatesNear(plainText, /balance\s+sheets?/gi, 600);
+          // Secondary: dates near income statement headers
+          const isDates = extractDatesNear(plainText, /statements?\s+of\s+operations|statements?\s+of\s+(comprehensive\s+)?(?:income|loss)/gi, 400);
+          // Combined unique set
+          const allFSDates = [...new Set([...bsDates, ...isDates])].sort((a,b) => b.localeCompare(a));
+
+          // A date is a fiscal year-end if it falls on Dec 31, Mar 31, Jun 30, or Sep 30
+          // AND appears at least twice in bsDates (column header repeats for both periods shown)
+          // OR it's Dec 31 (most common domestic FYE)
+          const isFYE = (d) => d.endsWith("-12-31") || d.endsWith("-03-31") || d.endsWith("-06-30") || d.endsWith("-09-30");
+
+          // Among balance sheet dates: split into FYE candidates vs interim candidates
+          const fyeDates = bsDates.filter(isFYE);
+          const interimDates = bsDates.filter(d => !isFYE(d));
+
+          // Pick most recent of each
+          const regexMostRecentAnnual = fyeDates[0] || null;
+          // Interim: must be AFTER the most recent annual (otherwise it's just the comparison period)
+          const regexMostRecentInterim = regexMostRecentAnnual
+            ? (interimDates.find(d => d > regexMostRecentAnnual) || null)
+            : (interimDates[0] || null);
+
+
+
           // Search for IBR section by looking for the keyword anywhere in the full text
-          // "INCORPORATION" keyword position
           const ibrKeyword = /incorporat\w*\s+by\s+reference|where\s+you\s+can\s+find\s+more\s+information/gi;
           let ibrSnippet = "";
           let match;
@@ -315,48 +369,36 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
             const start = Math.max(0, match.index - 200);
             const end = Math.min(plainText.length, match.index + 3000);
             snippets.push(plainText.slice(start, end));
-            if (snippets.length >= 5) break; // cap at 5 occurrences
+            if (snippets.length >= 5) break;
           }
           ibrSnippet = snippets.join("\n\n---\n\n");
 
-          // Also grab last 8000 chars where IBR sections often appear at end of S-4
+          // Grab last 8000 chars where IBR sections often appear at end of S-4
           const tailText = plainText.slice(-8000);
 
           const contextToAnalyze = ibrSnippet
             ? `EXTRACTED IBR-RELEVANT SECTIONS (found by keyword search):\n${ibrSnippet.slice(0, 12000)}\n\nDOCUMENT TAIL (last portion):\n${tailText}`
             : `No IBR keyword found in document. Document tail:\n${tailText}`;
 
-          // Also search for offering type indicators in a broader slice of the document
-          // to determine if this is a one-time transaction or an ongoing offering
           const offeringSnippet = plainText.slice(0, 5000) + "\n\n" + plainText.slice(-3000);
 
           const ibr = await base44.asServiceRole.integrations.Core.InvokeLLM({
             prompt: `You are reviewing an SEC registration statement. Extract:
 
-1. BALANCE_SHEET_DATES: Look for "Condensed Consolidated Balance Sheet" or balance sheet table headers. Extract ALL column dates shown. Format: array of "YYYY-MM-DD" strings (e.g. ["2024-03-31", "2023-12-31"]). This is CRITICAL — read the table column headers exactly.
+1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section? (true/false)
 
-2. INCOME_STATEMENT_DATES: Look for income statement table headers. Extract ALL period-end dates shown. Format: array of "YYYY-MM-DD" strings.
+2. FORWARD_IBR: Does it contain automatic forward IBR language for future Exchange Act filings? (true/false)
 
-3. MOST_RECENT_INTERIM_DATE: The most recent non-annual period-end in the FS (e.g. 2024-03-31 for Q1). null if only annual FS present.
+3. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of specifically NAMED 10-K/20-F in IBR, else null.
 
-4. MOST_RECENT_ANNUAL_DATE: The most recent annual (FY-end) date in the FS (e.g. 2023-12-31). null if none.
+4. IS_ONGOING_OFFERING: (true/false) Is this prospectus for ongoing offers? Return TRUE if warrants, resale, or continuous offerings are registered. Return FALSE only if ONLY merger consideration shares, NO warrants, NO resale.
 
-5. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section? (true/false)
-
-6. FORWARD_IBR: Does it contain automatic forward IBR language for future Exchange Act filings? (true/false)
-
-7. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of specifically NAMED 10-K/20-F in IBR, else null.
-
-8. IS_ONGOING_OFFERING: (true/false) Is this prospectus for ongoing offers? Return TRUE if warrants, resale, or continuous offerings are registered. Return FALSE only if ONLY merger consideration shares, NO warrants, NO resale.
+NOTE: FS dates (most_recent_annual_date, most_recent_interim_date) will be pre-populated from direct regex extraction — you do NOT need to find them.
 
 Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringSnippet.slice(0, 3000)}`,
             response_json_schema: {
               type: "object",
               properties: {
-                balance_sheet_dates: { type: "array", items: { type: "string" } },
-                income_statement_dates: { type: "array", items: { type: "string" } },
-                most_recent_interim_date: { type: ["string", "null"] },
-                most_recent_annual_date: { type: ["string", "null"] },
                 has_ibr_section: { type: "boolean" },
                 forward_ibr: { type: "boolean" },
                 specific_annual_incorporated: { type: ["string", "null"] },
@@ -364,7 +406,15 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
               }
             }
           });
-          regIBRInfo = ibr;
+
+          // Merge: use regex-extracted FS dates as primary source (reliable),
+          // LLM for IBR/structure fields only.
+          regIBRInfo = {
+            ...(ibr || {}),
+            most_recent_annual_date: regexMostRecentAnnual,
+            most_recent_interim_date: regexMostRecentInterim,
+            balance_sheet_dates: allFSDates.slice(0, 10),
+          };
 
           // ── Extract securities being registered from the cover page ──────────
           // Use the cover page text (first 8000 chars of the plain text) which always
@@ -729,10 +779,29 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
         // Grace window check: audited year-end FS must be included if available before effectiveness.
         // Two cases:
         //   (a) A newer 10-K was filed AFTER the registration date (annuals.length > 0), OR
-        //   (b) The 10-K filed BEFORE the reg date is newer than the FS in the reg document
-        //       (i.e., the S-1 was filed with stale FS even though a newer 10-K already existed)
-        const newerAnnualAlreadyFiled = fsAnnualDate !== latestPriorAnnual.date &&
-          new Date(latestPriorAnnual.date) > new Date(fsAnnualDate);
+        //   (b) The 10-K filed BEFORE the reg date covers a LATER FISCAL YEAR than the FS in the
+        //       reg document (i.e., the S-1 was filed with stale FS even though a newer fiscal year's
+        //       10-K already existed). We compare fiscal year-end dates, not filing dates.
+        //
+        // IMPORTANT: A 10-K filed on e.g. 2026-03-31 for FY2025 (year-end 2025-12-31) does NOT
+        // constitute "newer FS" if the S-1 already contains FY2025 FS (year-end 2025-12-31).
+        // We must compare fiscal year-ends, not filing dates.
+        //
+        // Heuristic for prior annual's fiscal year-end: a 10-K filed in Q1 of year Y typically
+        // covers FY ending Dec 31 of year Y-1. We derive the FYE from the filing date.
+        const deriveFYEFromFilingDate = (filingDateStr) => {
+          // For a 10-K filed Jan-Apr of year Y, FYE is typically Dec 31 of year Y-1
+          // For a 10-K filed May-Dec of year Y, FYE is typically Dec 31 of year Y
+          // More precisely: most 10-Ks are filed within 60-90 days of FYE.
+          // Simple heuristic: filing date minus 90 days ≈ FYE year
+          const d = new Date(filingDateStr);
+          const approxFYE = new Date(d.getTime() - 90 * 24 * 60 * 60 * 1000);
+          // Return Dec 31 of that approximate year
+          return `${approxFYE.getFullYear()}-12-31`;
+        };
+        const priorAnnualDerivedFYE = deriveFYEFromFilingDate(latestPriorAnnual.date);
+        // A newer 10-K's FYE is "after" the reg's FS FYE only if it covers a LATER fiscal year
+        const newerAnnualAlreadyFiled = priorAnnualDerivedFYE > fsAnnualDate;
         const isAuditedFSAvailableBeforeEffectiveness =
           annuals.length > 0 || newerAnnualAlreadyFiled;
         // Identify the most current available annual for the error message
