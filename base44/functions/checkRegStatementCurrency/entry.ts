@@ -705,7 +705,7 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
       checks.push({
         id: "effectiveness",
         label: "Registration Statement — Not Yet Effective (Rule 3-12 Analysis)",
-        status: "warn",
+        status: "info",
         detail: `Registration not yet effective. ${effectiveness.reason}. Applying Rule 3-12 pre-effectiveness financial-statement currency analysis below.`,
         filingDate: null, filingUrl: null, filingForm: null,
       });
@@ -841,30 +841,49 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
         });
 
         // Interim assessment under Rule 3-12 — use LLM-extracted interim date if available
+        // IMPORTANT: If the annual FS in the reg document (fsAnnualDate) is LATER than the
+        // most recent 10-Q period, the annual supersedes the interim — no stale interim issue.
+        // E.g.: S-1 contains FY2025 FS (Dec 31, 2025); latest 10-Q is for Q3 (Sep 30, 2025).
+        // The annual covers a later period than the 10-Q, so the 10-Q is irrelevant.
         const interimCheckDate = fsInterimDate || latestPriorQuarterly?.date || null;
         const interimCheckForm = latestPriorQuarterly?.form || "10-Q";
         if (interimCheckDate) {
-          const priorQAge = daysSince(interimCheckDate);
-          const interimThreshold = 134; // Rule 3-12: interim FS must not be more than ~4.5 months (135 days) old
-          const interimStatus = priorQAge > interimThreshold ? "warn" : "pass";
-          const interimDateSource = fsInterimDate && fsInterimDate !== latestPriorQuarterly?.date
-            ? `interim period-end ${interimCheckDate} (from FS in registration document)`
-            : `${interimCheckForm} filed ${interimCheckDate}`;
-          checks.push({
-            id: "rule312_interim_preeffective",
-            label: "Rule 3-12 Pre-Effectiveness — Interim Financial Statement Currency",
-            status: interimStatus,
-            detail: interimStatus === "warn"
-              ? `Most recent interim FS in the registration have period-end ${interimCheckDate} (${interimDateSource}) — ${priorQAge} days ago. This may be too stale as the most current interim period before effectiveness. Review whether a more recent interim period should be reflected in the registration.`
-              : `Most recent interim FS in the registration have period-end ${interimCheckDate} (${interimDateSource}) — ${priorQAge} days ago. Appears current for pre-effectiveness interim financial statement purposes.`,
-            filingDate: latestPriorQuarterly?.date || null, filingUrl: edgarUrl(latestPriorQuarterly), filingForm: interimCheckForm,
-          });
+          // Derive the approximate period-end of the prior quarterly (filing date - ~45 days ≈ period end)
+          // More precisely: if the annual FY-end is AFTER the 10-Q filing date, the annual supersedes it.
+          const annualSupersedes = fsAnnualDate && interimCheckDate && fsAnnualDate > interimCheckDate;
+          if (annualSupersedes) {
+            checks.push({
+              id: "rule312_interim_preeffective",
+              label: "Rule 3-12 Pre-Effectiveness — Interim Financial Statement Currency",
+              status: "pass",
+              detail: `Annual FS in the registration (fiscal year-end ${fsAnnualDate}) are more recent than the latest 10-Q filing (${interimCheckDate}) — the annual supersedes the interim. No stale interim issue under Rule 3-12.`,
+              filingDate: latestPriorQuarterly?.date || null, filingUrl: edgarUrl(latestPriorQuarterly), filingForm: interimCheckForm,
+            });
+          } else {
+            const priorQAge = daysSince(interimCheckDate);
+            const interimThreshold = 134;
+            const interimStatus = priorQAge > interimThreshold ? "warn" : "pass";
+            const interimDateSource = fsInterimDate && fsInterimDate !== latestPriorQuarterly?.date
+              ? `interim period-end ${interimCheckDate} (from FS in registration document)`
+              : `${interimCheckForm} filed ${interimCheckDate}`;
+            checks.push({
+              id: "rule312_interim_preeffective",
+              label: "Rule 3-12 Pre-Effectiveness — Interim Financial Statement Currency",
+              status: interimStatus,
+              detail: interimStatus === "warn"
+                ? `Most recent interim FS in the registration have period-end ${interimCheckDate} (${interimDateSource}) — ${priorQAge} days ago. This may be too stale as the most current interim period before effectiveness. Review whether a more recent interim period should be reflected in the registration.`
+                : `Most recent interim FS in the registration have period-end ${interimCheckDate} (${interimDateSource}) — ${priorQAge} days ago. Appears current for pre-effectiveness interim financial statement purposes.`,
+              filingDate: latestPriorQuarterly?.date || null, filingUrl: edgarUrl(latestPriorQuarterly), filingForm: interimCheckForm,
+            });
+          }
         }
       }
 
       const overallStatus =
         checks.some(c => c.status === "fail") ? "fail" :
         checks.some(c => c.status === "warn") ? "warn" : "pass";
+
+
 
       const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: `Securities law compliance expert. This registration statement is NOT YET EFFECTIVE. Apply Rule 3-12 pre-effectiveness analysis only.
