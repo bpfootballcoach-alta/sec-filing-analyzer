@@ -625,7 +625,14 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
     const currentReports = subsequentFilings.filter(f => f.form?.startsWith("8-K"));
     const latestCurrent = currentReports[0] || null;
 
-    const mostRecentEffectiveUpdate = latestPostEffective || latestProspectus || null;
+    // Pick whichever is more recent: the latest effective POS AM or the latest 424B prospectus
+    const mostRecentEffectiveUpdate = (() => {
+      if (!latestPostEffective && !latestProspectus) return null;
+      if (!latestPostEffective) return latestProspectus;
+      if (!latestProspectus) return latestPostEffective;
+      return new Date(latestProspectus.date) > new Date(latestPostEffective.date)
+        ? latestProspectus : latestPostEffective;
+    })();
 
     const checks = [];
 
