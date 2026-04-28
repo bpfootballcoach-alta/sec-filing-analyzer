@@ -469,37 +469,18 @@ ${coverText}`,
     // look BACKWARDS in the text for Filed date, index URL, and form type.
 
     const parseFileNumFeed = (xml) => {
+      // The EDGAR Atom feed uses proper XML tags inside each <entry> block:
+      //   <accession-number>, <filing-date>, <filing-href>, <filing-type>
+      // Split on entry boundaries and parse each block's XML tags directly.
       const entries = [];
-      // EDGAR AccNo patterns:
-      //   Regular filings:  \d{10}-\d{2}-\d{6}   e.g. 0001213900-24-046320
-      //   EFFECT notices:   9999999995-\d{2}-\d{6} e.g. 9999999995-24-001696
-      //   SEC uploads:      0000000000-\d{2}-\d{6}
-      const accPattern = /<b>AccNo:<\/b>\s*((?:\d{10}|\d{13})-\d{2}-\d{6})/g;
-      let m;
-      while ((m = accPattern.exec(xml)) !== null) {
-        const accNo = m[1];
-        const blockStart = Math.max(0, m.index - 2000);
-        const block = xml.slice(blockStart, m.index + accNo.length + 100);
-
-        // Index URL
-        const idxMatches = [...block.matchAll(/href="(https?:\/\/[^"]+?-index\.htm)"/gi)];
-        const indexUrl = idxMatches.length > 0
-          ? idxMatches[idxMatches.length - 1][1]
-          : `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo.replace(/-/g, "")}/${accNo}-index.htm`;
-
-        // Filed date
-        const filedMatches = [...block.matchAll(/<b>Filed:<\/b>\s*(\d{4}-\d{2}-\d{2})/gi)];
-        const date = filedMatches.length > 0 ? filedMatches[filedMatches.length - 1][1] : null;
-
-        // Form type — strip HTML and match known SEC form types
-        const lastFiledIdx = block.lastIndexOf("<b>Filed:</b>");
-        const preBlock = lastFiledIdx > 0 ? block.slice(0, lastFiledIdx) : block;
-        const plainPre = preBlock.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
-        const formMatch = plainPre.match(/\b(424B\d*|POS\s*AM(?:\/A)?|EFFECT|UPLOAD|S-\d+(?:\/A)?|F-\d+(?:\/A)?)\s*(?:\[[^\]]*\])?\s*[-–]\s/i);
-        const form = formMatch ? formMatch[1].replace(/\s+/g, " ").trim().toUpperCase() : null;
-
+      const entryBlocks = xml.split(/<entry[\s>]/i);
+      for (const block of entryBlocks.slice(1)) {
+        const accNo  = (block.match(/<accession-number>([\d-]+)<\/accession-number>/i) || [])[1];
+        const date   = (block.match(/<filing-date>(\d{4}-\d{2}-\d{2})<\/filing-date>/i) || [])[1];
+        const href   = (block.match(/<filing-href>(https?:\/\/[^<]+)<\/filing-href>/i) || [])[1];
+        const form   = (block.match(/<filing-type>([^<]+)<\/filing-type>/i) || [])[1]?.trim().toUpperCase();
         if (!accNo || !date || !form) continue;
-        entries.push({ accNo, date, form, indexUrl });
+        entries.push({ accNo, date, form, indexUrl: href || `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo.replace(/-/g,"")}/${accNo}-index.htm` });
       }
       return entries;
     };
@@ -918,6 +899,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
         registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
           daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isTransactionReg: true,
+          registrationNumber: regFileNumber || null,
           annualLimitMonths: null, interimLimitMonths: null,
           securitiesRegistered: securitiesRegistered || null },
         filingChain: filingChain.length > 0 ? filingChain : null,
@@ -1048,6 +1030,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
         mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
         registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
           daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
+          registrationNumber: regFileNumber || null,
           annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
           securitiesRegistered: securitiesRegistered || null },
         filingChain: filingChain.length > 0 ? filingChain : null,
@@ -1324,10 +1307,10 @@ Provide 2-3 sentence verdict citing Section 10(a)(3) specifically. What is the p
       mode: "detail", ticker: ticker.toUpperCase(), cik, companyName,
       registration: { form: selectedReg.form, date: selectedReg.date, accession: selectedReg.accession,
         daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
+        registrationNumber: regFileNumber || null,
         annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
         securitiesRegistered: securitiesRegistered || null },
       filingChain: filingChain.length > 0 ? filingChain : null,
-      prospectusUpdates: prospectusUpdates.length > 0 ? prospectusUpdates : null,
       overallStatus, stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512",
       aiSummary: aiSummary || null, checks,
       checkedAt: new Date().toISOString(),
