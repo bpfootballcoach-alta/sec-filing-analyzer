@@ -191,7 +191,7 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
         const jsonIdx = await jsonIdxRes.json().catch(() => null);
         if (jsonIdx?.documents) {
           const feeDoc = jsonIdx.documents.find(d =>
-            d.type?.toUpperCase().includes("EX-FILING FEE") || d.description?.toUpperCase().includes("FILING FEE")
+            d.type?.toUpperCase().includes("EX-FILING FEE") || d.type?.toUpperCase().includes("EX-FILING FEES") || d.description?.toUpperCase().includes("FILING FEE")
           );
           if (feeDoc) feeFilename = feeDoc.filename;
         }
@@ -199,19 +199,24 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
       
       // Fall back to HTML index
       if (!feeFilename) {
-        const htmIdxRes = await fetch(
-          `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
-          { headers: HEADERS }
-        ).catch(() => null);
-        if (htmIdxRes?.ok) {
-          const idxHtml = await htmIdxRes.text();
-          for (const row of (idxHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [])) {
-            if (/EX-FILING FEE/i.test(row)) {
-              const m = row.match(/href="([^"]+\.htm)"/i);
-              if (m) { feeFilename = m[1].split("/").pop(); break; }
-            }
+      const htmIdxRes = await fetch(
+      `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
+      { headers: HEADERS }
+      ).catch(() => null);
+      if (htmIdxRes?.ok) {
+      const idxHtml = await htmIdxRes.text();
+      for (const row of (idxHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [])) {
+        if (/EX-FILING FEE/i.test(row)) {
+          // Match any .htm file in the row
+          const m = row.match(/href="([^"]*\.htm)"/i);
+          if (m) {
+            // Could be a full path or just a filename
+            feeFilename = m[1].includes("/") ? m[1].split("/").pop() : m[1];
+            break;
           }
         }
+      }
+      }
       }
       
       // If no exhibit found, try the main registration document itself (cover page contains fee table on S-1/S-3/F-1)
@@ -551,7 +556,21 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
 
     for (const updateFiling of allUpdatesWithThisFileNumber) {
       try {
-        const updateUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${updateFiling.accession.replace(/-/g, "")}/${updateFiling.doc}`;
+        // Build the URL: prefer indexUrl (resolves the actual doc), fallback to direct doc URL
+        let updateUrl;
+        if (updateFiling.indexUrl) {
+          // Fetch the index page to find the primary document filename
+          const idxRes = await fetch(updateFiling.indexUrl, { headers: HEADERS }).catch(() => null);
+          if (idxRes?.ok) {
+            const idxHtml = await idxRes.text();
+            // Extract the first .htm document from the index table (primary document)
+            const docMatch = idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?\.htm)"/i);
+            updateUrl = docMatch ? `https://www.sec.gov${docMatch[1]}` : null;
+          }
+        } else if (updateFiling.doc) {
+          updateUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${updateFiling.accession.replace(/-/g, "")}/${updateFiling.doc}`;
+        }
+        if (!updateUrl) continue;
         const updateRes = await fetch(updateUrl, { headers: HEADERS });
         if (updateRes.ok) {
           const updateText = await updateRes.text();
