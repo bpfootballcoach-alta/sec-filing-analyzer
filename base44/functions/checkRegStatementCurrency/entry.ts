@@ -94,13 +94,13 @@ Deno.serve(async (req) => {
 
     const edgarUrl = (f) => {
       if (!f) return null;
+      if (f.indexUrl) return f.indexUrl;
       const accClean = f.accession?.replace(/-/g, "");
       if (!accClean) return null;
-      if (f.doc && !f.doc.includes("undefined")) {
+      if (f.doc && f.doc.trim()) {
         return `https://www.sec.gov/Archives/edgar/data/${parseInt(f.cik || cik)}/${accClean}/${f.doc}`;
       }
-      // Fallback: link to the filing index page
-      return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${parseInt(f.cik || cik)}&type=&dateb=&owner=include&count=40&search_text=&accession=${f.accession}`;
+      return `https://www.sec.gov/Archives/edgar/data/${parseInt(f.cik || cik)}/${accClean}/${accClean}-index.htm`;
     };
 
     const effectFilings = filings.filter(f => f.form?.toUpperCase().trim() === "EFFECT");
@@ -459,84 +459,78 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
       PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) ||
       POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim());
 
-    // EDGAR full-text search: find ALL 424B/POS AM filings that cite this registration file number
-    // Use the EDGAR submissions API filtered by form type — this is the most reliable method
-    // because 424B and POS AM filings on EDGAR often have NULL fileNumber in submissions.json
-    // even though they do cite the registration file number inside the document.
-    let eftsUpdates = [];
+    // ── THE CORRECT WAY: query EDGAR by file number directly ─────────────────
+    // browse-edgar?action=getcompany&filenum=333-XXXXXX returns ALL filings under
+    // that registration file number — 424Bs, POS AMs, EFFECT notices, amendments, etc.
+    // This is the only reliable method because submissions.json often omits fileNumber
+    // on 424B and POS AM entries even though they belong to the same registration.
+    const allUpdatesWithThisFileNumber = [];
     if (regFileNumber) {
       try {
-        // Use EDGAR EFTS (full-text search) to find filings that mention the file number
-        const eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${encodeURIComponent(regFileNumber)}%22&dateRange=custom&startdt=${selectedReg.date}&forms=424B1,424B2,424B3,424B4,424B5,424B7,424B8,POS+AM`;
-        const eftsRes = await fetch(eftsUrl, { headers: HEADERS }).catch(() => null);
-        if (eftsRes?.ok) {
-          const eftsData = await eftsRes.json();
-          const hits = eftsData.hits?.hits || [];
-          for (const hit of hits) {
-            const src = hit._source || {};
-            // Only include filings for this CIK
-            const hitCik = String(src.entity_id || src.ciks?.[0] || "").padStart(10, "0");
-            if (hitCik && hitCik !== cik) continue;
-            const acc = (src.accession_no || "").replace(/\//g, "-");
-            if (!acc) continue;
-            // Find the primary doc — try to get it from the filing index
-            let primaryDoc = src.file_name || "";
-            if (!primaryDoc && acc) {
-              try {
-                const idxRes = await fetch(`https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${acc.replace(/-/g,"")}/index.json`, { headers: HEADERS }).catch(()=>null);
-                if (idxRes?.ok) {
-                  const idx = await idxRes.json();
-                  const primary = idx.directory?.item?.find(i => i.type === src.form_type || i.name?.endsWith(".htm"));
-                  if (primary) primaryDoc = primary.name;
-                }
-              } catch(_) {}
-            }
-            eftsUpdates.push({
-              form: src.form_type || "",
-              date: src.file_date || "",
-              accession: acc,
-              doc: primaryDoc,
+        const fileNumUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum=${encodeURIComponent(regFileNumber)}&type=&dateb=&owner=include&count=100&search_text=&output=atom`;
+        const fileNumRes = await fetch(fileNumUrl, { headers: HEADERS });
+        if (fileNumRes.ok) {
+          const atomXml = await fileNumRes.text();
+          // The Atom feed has consistent patterns per entry:
+          // AccNo: appears as "AccNo:</b> 0001213900-25-079439"
+          // Index URL appears as href on the Documents link: ".../0001213900-25-079439-index.htm"
+          // Form type appears in the title: "424B3 - Prospectus..." or "POS AM - Post-Effective..."
+          // Filed date appears as "Filed:</b> 2025-08-21"
+          //
+          // Strategy: split by accession number pattern, then extract form+date from surrounding text
+          const accPattern = /AccNo:<\/b>\s*([\d][\d-]{17,19})/g;
+          let accMatch;
+          while ((accMatch = accPattern.exec(atomXml)) !== null) {
+            const accession = accMatch[1].trim();
+            // Get a window of text around this accession number to extract form and date
+            const windowStart = Math.max(0, accMatch.index - 2000);
+            const windowEnd = Math.min(atomXml.length, accMatch.index + 200);
+            const window = atomXml.slice(windowStart, windowEnd);
+
+            // Extract index URL (appears before AccNo in the same entry)
+            const indexUrlMatch = window.match(/href="(https?:\/\/[^"]+?-index\.htm)"/i);
+            const indexUrl = indexUrlMatch?.[1] || 
+              `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accession.replace(/-/g,"")}/0${accession.replace(/-/g,"")}-index.htm`;
+
+            // Extract form type — appears as first word(s) before " - " in the title-like text
+            // Pattern: "424B3 - Prospectus" or "POS AM - Post-Effective"
+            const formMatch = window.match(/>(424B\d*|POS AM|PROSPECTUS|S-\d+[\/A]*|EFFECT)\s*(?:\[.*?\])?\s*(?:-|<)/i);
+            const form = formMatch?.[1]?.trim().toUpperCase() || "";
+
+            // Extract date: "Filed:</b> 2025-08-21"
+            const dateMatch = window.match(/Filed:<\/b>\s*(\d{4}-\d{2}-\d{2})/);
+            const date = dateMatch?.[1] || "";
+
+            if (!form || !date || !accession) continue;
+            if (!isProspectusOrPosAm({ form })) continue;
+            if (date < selectedReg.date) continue;
+
+            // Avoid duplicates
+            if (allUpdatesWithThisFileNumber.some(u => u.accession === accession)) continue;
+
+            allUpdatesWithThisFileNumber.push({
+              form,
+              date,
+              accession,
+              doc: "",
               fileNumber: regFileNumber,
               cik,
-              description: "",
+              indexUrl,
               size: 0,
             });
           }
         }
-      } catch (_) { /* fall back to company API */ }
+      } catch (_) { /* continue with empty list */ }
+    }
 
-      // Fallback: use the EDGAR company filings API to get all 424B/POS AM filings for this CIK
-      // then keep any that were filed after the registration date (they connect via being same CIK)
-      // Note: this is broad but necessary since fileNumber is often null in EDGAR submissions
-      const prospectusAndPosAmFromEDGAR = filings.filter(f => {
-        if (!isProspectusOrPosAm(f)) return false;
-        if (new Date(f.date) < regDate) return false;
-        // If fileNumber matches, definitely include
-        if (regFileNumber && f.fileNumber === regFileNumber) return true;
-        // If fileNumber is null/missing, include if filed after reg (same CIK = same company)
-        if (!f.fileNumber) return true;
-        return false;
-      });
-
-      for (const f of prospectusAndPosAmFromEDGAR) {
-        const accClean = f.accession?.replace(/-/g, "");
-        if (!accClean) continue;
-        if (!eftsUpdates.some(u => u.accession?.replace(/-/g, "") === accClean)) {
-          eftsUpdates.push({ ...f, fileNumber: f.fileNumber || regFileNumber });
-        }
+    // Also add any locally-matched filings (submissions.json entries where fileNumber is populated)
+    for (const f of subsequentFilings.filter(f => isProspectusOrPosAm(f) && belongsToThisReg(f))) {
+      const accClean = f.accession?.replace(/-/g, "");
+      if (!allUpdatesWithThisFileNumber.some(u => u.accession?.replace(/-/g, "") === accClean)) {
+        allUpdatesWithThisFileNumber.push(f);
       }
     }
 
-    // Merge: local filings matched by fileNumber + EFTS results, deduped by accession
-    const localMatched = subsequentFilings.filter(f => isProspectusOrPosAm(f) && belongsToThisReg(f));
-    const allUpdatesWithThisFileNumber = [...localMatched];
-    for (const eu of eftsUpdates) {
-      const accClean = eu.accession?.replace(/-/g, "");
-      if (!accClean) continue;
-      if (!allUpdatesWithThisFileNumber.some(f => f.accession?.replace(/-/g, "") === accClean)) {
-        allUpdatesWithThisFileNumber.push(eu);
-      }
-    }
     // Sort by date descending
     allUpdatesWithThisFileNumber.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
