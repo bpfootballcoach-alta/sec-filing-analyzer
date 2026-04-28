@@ -61,8 +61,18 @@ Deno.serve(async (req) => {
       return Response.json({ error: "Fetched content is empty or too short" }, { status: 502 });
     }
 
-    // Upload as .html file so the LLM can analyze it via file_urls
-    const file = new File([text], "filing.html", { type: "text/html" });
+    // Strip HTML tags, collapse whitespace, and truncate to 400k chars
+    // SEC filings with inline XBRL can be 4MB+ of raw HTML; the LLM only needs readable text.
+    const stripped = text
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 400000);
+
+    // Upload as plain text so the LLM gets clean readable content (not raw HTML)
+    const file = new File([stripped], "filing.txt", { type: "text/plain" });
     const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
 
     return Response.json({ file_url: uploaded.file_url, content_length: text.length, resolved_url: resolvedUrl });

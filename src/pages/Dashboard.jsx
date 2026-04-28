@@ -76,7 +76,7 @@ export default function Dashboard() {
             file_urls: [fetchRes.data.file_url],
           });
         } else {
-          // For uploaded files: pass via file_urls
+          // For uploaded files: pass via file_urls (Gemini handles PDF/HTML natively)
           extractionResult = await base44.integrations.Core.InvokeLLM({
             prompt: buildExtractionPrompt(file_url, false, null),
             response_json_schema: EXTRACTION_SCHEMA,
