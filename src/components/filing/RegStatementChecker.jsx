@@ -338,40 +338,53 @@ export default function RegStatementChecker() {
             </div>
           )}
 
-          {/* Prospectus Amendments & Updates by File Number */}
-          {detailResult.prospectusUpdates && detailResult.prospectusUpdates.length > 0 && (
+          {/* Full Filing Chain Timeline */}
+          {detailResult.filingChain && detailResult.filingChain.length > 0 && (
             <div className="border border-border rounded-lg overflow-hidden">
-              <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
-                <span className="text-sm font-semibold text-foreground">Prospectus Updates (POS AM & 424B)</span>
-                <span className="ml-2 text-xs text-muted-foreground">— {detailResult.prospectusUpdates.length} filing(s)</span>
+              <div className="px-4 py-2.5 bg-muted/40 border-b border-border flex items-center justify-between">
+                <span className="text-sm font-semibold text-foreground">Filing Chain — File No. {detailResult.registration.registrationNumber || "—"}</span>
+                <span className="text-xs text-muted-foreground">{detailResult.filingChain.length} filing(s)</span>
               </div>
-              <div className="px-4 py-3 space-y-3">
-                {detailResult.prospectusUpdates.map((update, i) => (
-                  <div key={i} className="border border-border/50 rounded-lg p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">{update.form}</Badge>
-                        <span className="text-sm font-semibold text-foreground">{update.date}</span>
-                        <span className="text-xs text-muted-foreground">File #: {update.fileNumber || "—"}</span>
-                      </div>
-                      {update.url && (
-                        <a href={update.url} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="w-3.5 h-3.5 text-primary/60 hover:text-primary transition-colors" />
-                        </a>
-                      )}
-                    </div>
-                    {update.annualFSDate && (
-                      <div className="text-xs text-muted-foreground">
-                        <span className="font-semibold">Annual FS:</span> {update.annualFSDate}
-                      </div>
-                    )}
-                    {update.interimFSDate && (
-                      <div className="text-xs text-muted-foreground">
-                        <span className="font-semibold">Interim FS:</span> {update.interimFSDate}
-                      </div>
-                    )}
-                  </div>
-                ))}
+              <div className="px-4 py-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {detailResult.filingChain.map((entry, i) => {
+                    const isLast = i === detailResult.filingChain.length - 1;
+                    const color = entry.isEffect
+                      ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                      : entry.isProspectus
+                        ? "bg-blue-100 text-blue-700 border-blue-200"
+                        : entry.isPosAm
+                          ? "bg-amber-100 text-amber-700 border-amber-200"
+                          : entry.isRegStatement
+                            ? "bg-primary/10 text-primary border-primary/20"
+                            : "bg-muted text-muted-foreground border-border";
+                    return (
+                      <React.Fragment key={i}>
+                        <div className="flex flex-col items-center gap-0.5">
+                          {entry.url ? (
+                            <a href={entry.url} target="_blank" rel="noopener noreferrer"
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-xs font-semibold hover:opacity-80 transition-opacity ${color}`}>
+                              {entry.form}
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          ) : (
+                            <span className={`inline-flex items-center px-2 py-1 rounded border text-xs font-semibold ${color}`}>
+                              {entry.form}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground">{entry.date}</span>
+                        </div>
+                        {!isLast && <span className="text-muted-foreground text-xs mt-[-10px]">→</span>}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+                  <span><span className="inline-block w-2 h-2 rounded-sm bg-primary/10 border border-primary/20 mr-1"></span>Reg Statement</span>
+                  <span><span className="inline-block w-2 h-2 rounded-sm bg-emerald-100 border border-emerald-200 mr-1"></span>EFFECT</span>
+                  <span><span className="inline-block w-2 h-2 rounded-sm bg-amber-100 border border-amber-200 mr-1"></span>POS AM</span>
+                  <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-100 border border-blue-200 mr-1"></span>424B Prospectus</span>
+                </div>
               </div>
             </div>
           )}

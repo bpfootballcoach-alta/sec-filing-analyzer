@@ -447,6 +447,11 @@ ${coverText}`,
       PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) ||
       POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim());
 
+    const isRegStatementForm = (form) => {
+      const f = form?.toUpperCase().trim();
+      return REG_FORMS.some(r => f === r || f === r + "/A" || f.startsWith(r + "/"));
+    };
+
     // ── AUTHORITATIVE LOOKUP: query EDGAR by file number ─────────────────────
     // browse-edgar?action=getcompany&filenum=333-XXXXXX&output=atom returns EVERY filing
     // ever made under this registration file number: S-1, S-1/A, 424Bs, POS AMs, EFFECT, etc.
@@ -465,33 +470,32 @@ ${coverText}`,
 
     const parseFileNumFeed = (xml) => {
       const entries = [];
-      // Find every AccNo occurrence
-      const accPattern = /<b>AccNo:<\/b>\s*(\d{10}-\d{2}-\d{6})/g;
+      // EDGAR AccNo patterns:
+      //   Regular filings:  \d{10}-\d{2}-\d{6}   e.g. 0001213900-24-046320
+      //   EFFECT notices:   9999999995-\d{2}-\d{6} e.g. 9999999995-24-001696
+      //   SEC uploads:      0000000000-\d{2}-\d{6}
+      const accPattern = /<b>AccNo:<\/b>\s*((?:\d{10}|\d{13})-\d{2}-\d{6})/g;
       let m;
       while ((m = accPattern.exec(xml)) !== null) {
         const accNo = m[1];
-        // The form type, date, and index URL all appear BEFORE the AccNo in the same entry block.
-        // Look back up to 2000 chars to find the start of this entry's text.
         const blockStart = Math.max(0, m.index - 2000);
         const block = xml.slice(blockStart, m.index + accNo.length + 100);
 
-        // Index URL: last href="....-index.htm" before AccNo
+        // Index URL
         const idxMatches = [...block.matchAll(/href="(https?:\/\/[^"]+?-index\.htm)"/gi)];
         const indexUrl = idxMatches.length > 0
           ? idxMatches[idxMatches.length - 1][1]
           : `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo.replace(/-/g, "")}/${accNo}-index.htm`;
 
-        // Filed date: last "<b>Filed:</b> YYYY-MM-DD" before AccNo
+        // Filed date
         const filedMatches = [...block.matchAll(/<b>Filed:<\/b>\s*(\d{4}-\d{2}-\d{2})/gi)];
         const date = filedMatches.length > 0 ? filedMatches[filedMatches.length - 1][1] : null;
 
-        // Form type: strip HTML, find last "FORMTYPE - Description" pattern before the Filed line.
-        // In the real feed this looks like: "424B3 - Prospectus [Rule 424(b)(3)]" or "EFFECT - Notice..."
+        // Form type — strip HTML and match known SEC form types
         const lastFiledIdx = block.lastIndexOf("<b>Filed:</b>");
         const preBlock = lastFiledIdx > 0 ? block.slice(0, lastFiledIdx) : block;
         const plainPre = preBlock.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
-        // Match known form types followed by " - " description
-        const formMatch = plainPre.match(/\b(424B\d*|POS\s*AM(?:\/A)?|EFFECT|S-\d+(?:\/A)?|F-\d+(?:\/A)?)\s*(?:\[[^\]]*\])?\s*-\s/i);
+        const formMatch = plainPre.match(/\b(424B\d*|POS\s*AM(?:\/A)?|EFFECT|UPLOAD|S-\d+(?:\/A)?|F-\d+(?:\/A)?)\s*(?:\[[^\]]*\])?\s*[-–]\s/i);
         const form = formMatch ? formMatch[1].replace(/\s+/g, " ").trim().toUpperCase() : null;
 
         if (!accNo || !date || !form) continue;
@@ -522,6 +526,31 @@ ${coverText}`,
       .filter(e => isProspectusOrPosAm({ form: e.form }))
       .map(e => ({ form: e.form, date: e.date, accession: e.accNo, doc: "", fileNumber: regFileNumber, cik, indexUrl: e.indexUrl }))
       .sort((a, b) => b.date.localeCompare(a.date));
+
+    // ── Build the full filing chain for this registration (used in ALL response paths) ──
+    // Everything under the file number: S-1, S-1/A, EFFECT, 424B, POS AM — chronological order.
+    const buildFilingChain = () => {
+      const feedEntries = allFileNumEntries
+        .filter(e => e.form !== "UPLOAD")
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const feedAccNosSet = new Set(feedEntries.map(e => e.accNo));
+      // Add original reg statement(s) from submissions.json if not already in the feed
+      const fromSubs = filings.filter(f =>
+        f.fileNumber === regFileNumber &&
+        !feedAccNosSet.has(f.accession) &&
+        isRegStatementForm(f.form)
+      ).map(f => ({ accNo: f.accession, date: f.date, form: f.form, indexUrl: edgarUrl(f) }));
+      return [...fromSubs, ...feedEntries]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map(e => ({
+          form: e.form, date: e.date, accession: e.accNo, url: e.indexUrl,
+          isEffect: e.form === "EFFECT",
+          isProspectus: PROSPECTUS_FORMS.some(p => e.form?.toUpperCase().startsWith(p)),
+          isPosAm: POST_EFFECTIVE_FORMS.includes(e.form?.toUpperCase().trim()),
+          isRegStatement: isRegStatementForm(e.form),
+        }));
+    };
+    const filingChain = buildFilingChain();
 
     // POS AM effectiveness: check against EFFECT notices from this registration's file number feed
     const isPosAmEffectiveFromFeed = (posAm) => {
@@ -891,6 +920,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
           daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm, isTransactionReg: true,
           annualLimitMonths: null, interimLimitMonths: null,
           securitiesRegistered: securitiesRegistered || null },
+        filingChain: filingChain.length > 0 ? filingChain : null,
         overallStatus: "pass", stage: "post_effective", applicableRule: "N/A — Completed Transaction Registration",
         aiSummary: aiSummary || null, checks, checkedAt: new Date().toISOString(),
       });
@@ -1020,6 +1050,7 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
           daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
           annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
           securitiesRegistered: securitiesRegistered || null },
+        filingChain: filingChain.length > 0 ? filingChain : null,
         overallStatus: "fail", stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512",
         aiSummary: aiSummary || null, checks, checkedAt: new Date().toISOString(),
       });
@@ -1280,7 +1311,7 @@ Provide 2-3 sentence verdict citing Section 10(a)(3) specifically. What is the p
       }
     });
 
-    // Build prospectus updates list (all 424B/POS AM for this file number)
+    // Build prospectus updates list (424B/POS AM only, for the checks section)
     const prospectusUpdates = allUpdatesWithThisFileNumber.map(f => ({
       form: f.form,
       date: f.date,
@@ -1295,6 +1326,7 @@ Provide 2-3 sentence verdict citing Section 10(a)(3) specifically. What is the p
         daysOld: regDays, url: edgarUrl(selectedReg), isShelf, isFPI, isFForm,
         annualLimitMonths: Math.round(ANNUAL_LIMIT / 30), interimLimitMonths: 9,
         securitiesRegistered: securitiesRegistered || null },
+      filingChain: filingChain.length > 0 ? filingChain : null,
       prospectusUpdates: prospectusUpdates.length > 0 ? prospectusUpdates : null,
       overallStatus, stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512",
       aiSummary: aiSummary || null, checks,
