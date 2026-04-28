@@ -105,44 +105,42 @@ Deno.serve(async (req) => {
 
     const effectFilings = filings.filter(f => f.form?.toUpperCase().trim() === "EFFECT");
 
-    const isPosAmEffective = (posAm) => {
-      const posDate = new Date(posAm.date);
-      return effectFilings.some(e => {
-        const eDate = new Date(e.date);
-        return eDate >= posDate && (eDate - posDate) <= 60 * 24 * 60 * 60 * 1000;
-      });
-    };
-
-    // Determine whether a registration statement has been declared effective
-    const isLikelyEffective = (regFiling) => {
+    // isLikelyEffective: used in LIST MODE (no file-number feed available yet).
+    // Uses company-wide EFFECT notices + 424B proxies from submissions.json.
+    // For DETAIL MODE, we re-check using the authoritative file-number feed after it is fetched.
+    const isLikelyEffective = (regFiling, feedEffects) => {
       const form = regFiling.form?.toUpperCase().trim();
-      // S-3, F-3, S-8 are auto-effective upon filing
+      // S-3, F-3, S-8 are auto-effective upon filing under Rule 462(e)/(f)
       if (form === "S-8" || form?.includes("S-3") || form?.includes("F-3")) {
         return { effective: true, reason: `${form} auto-effective upon filing under Rule 462`, effectDate: regFiling.date };
       }
       const regDate = new Date(regFiling.date);
       const fileNum = regFiling.fileNumber || null;
-      const sameReg = (f) => (!fileNum || !f.fileNumber) ? true : f.fileNumber === fileNum;
 
+      // 1. Authoritative: EFFECT notices scoped to this registration's file number
+      if (feedEffects && feedEffects.length > 0) {
+        const hit = feedEffects.find(e => new Date(e.date) >= regDate);
+        if (hit) return { effective: true, reason: `EFFECT notice ${hit.date} (file no. ${fileNum})`, effectDate: hit.date };
+      }
+
+      // 2. Company-wide EFFECT notices from submissions.json, scoped by file number when available
       const effectAfter = effectFilings.find(e => {
         const eDate = new Date(e.date);
-        return eDate >= regDate && (eDate - regDate) < 365 * 24 * 60 * 60 * 1000;
+        if (eDate < regDate || (eDate - regDate) >= 365 * 24 * 60 * 60 * 1000) return false;
+        if (fileNum && e.fileNumber) return e.fileNumber === fileNum;
+        return true;
       });
       if (effectAfter) return { effective: true, reason: `EFFECT notice filed ${effectAfter.date}`, effectDate: effectAfter.date };
 
+      // 3. A 424B filing is definitive proof of effectiveness
+      const sameReg = (f) => (!fileNum || !f.fileNumber) ? true : f.fileNumber === fileNum;
       const prospectusAfter = filings.find(f => {
         const fDate = new Date(f.date);
         return fDate > regDate && PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) && sameReg(f);
       });
       if (prospectusAfter) return { effective: true, reason: `424B prospectus filed ${prospectusAfter.date} (proxy for effectiveness)`, effectDate: prospectusAfter.date };
 
-      const posAmAfter = filings.find(f => {
-        const fDate = new Date(f.date);
-        return fDate > regDate && POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim()) && sameReg(f) && isPosAmEffective(f);
-      });
-      if (posAmAfter) return { effective: true, reason: `effective POS AM filed ${posAmAfter.date}`, effectDate: posAmAfter.date };
-
-      return { effective: false, reason: "No EFFECT notice, 424B, or effective POS AM found" };
+      return { effective: false, reason: "No EFFECT notice or 424B prospectus found" };
     };
 
     // ── List mode ─────────────────────────────────────────────────────────────
@@ -163,7 +161,7 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
       return Response.json({
         mode: "list", ticker: ticker.toUpperCase(), cik, companyName,
         registrationStatements: regFilings.map((f, i) => {
-          const eff = isLikelyEffective(f);
+          const eff = isLikelyEffective(f, null); // list mode — no file-number feed
           return { form: f.form, date: f.date, accession: f.accession, doc: f.doc, url: edgarUrl(f),
             daysOld: daysSince(f.date), effective: eff.effective, effectiveReason: eff.reason,
             effectDate: eff.effectDate || null, registrationNumber: f.fileNumber || null, subject: summaryList[i] || null };
@@ -404,102 +402,101 @@ ${coverText}`,
         : false  // couldn't read doc — assume ongoing to be conservative
     );
 
-    // ── Find connected 424B/POS AM filings ───────────────────────────────────
-    // Strategy 1: match by fileNumber in the local filings array (works when EDGAR populates it)
-    // Strategy 2: query EDGAR full-text search for filings that cite this registration number
-    // Many 424B/POS AM filings on EDGAR have a NULL fileNumber in submissions.json, so we MUST
-    // use the EFTS search API to reliably find them by their registration file number.
-
-    const belongsToThisReg = (f) => {
-      if (!regFileNumber || !f.fileNumber) return false;
-      return f.fileNumber === regFileNumber;
-    };
-
     const isProspectusOrPosAm = (f) =>
       PROSPECTUS_FORMS.some(p => f.form?.toUpperCase().startsWith(p)) ||
       POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim());
 
-    // ── THE CORRECT WAY: query EDGAR by file number directly ─────────────────
-    // browse-edgar?action=getcompany&filenum=333-XXXXXX returns ALL filings under
-    // that registration file number — 424Bs, POS AMs, EFFECT notices, amendments, etc.
-    // This is the only reliable method because submissions.json often omits fileNumber
-    // on 424B and POS AM entries even though they belong to the same registration.
-    const allUpdatesWithThisFileNumber = [];
+    // ── AUTHORITATIVE LOOKUP: query EDGAR by file number ─────────────────────
+    // browse-edgar?action=getcompany&filenum=333-XXXXXX&output=atom returns EVERY filing
+    // ever made under this registration file number: S-1, S-1/A, 424Bs, POS AMs, EFFECT, etc.
+    // This is THE source of truth. We use it for:
+    //   1. All prospectus updates (424B filings)
+    //   2. POS AM filings and their effectiveness (EFFECT notices)
+    //   3. Whether the original registration was declared effective
+    //
+    // Real Atom entry format observed from live EDGAR feed:
+    //   ...href="https://.../{accno}-index.htm"...
+    //   424B3 - Prospectus [Rule 424(b)(3)]
+    //   <b>Filed:</b> 2023-11-08 <b>AccNo:</b> 0001104659-23-115727 <b>Size:</b> 4 MB
+    //
+    // Each entry block ends at the next AccNo. We parse by finding each AccNo, then
+    // look BACKWARDS in the text for Filed date, index URL, and form type.
+
+    const parseFileNumFeed = (xml) => {
+      const entries = [];
+      // Find every AccNo occurrence
+      const accPattern = /<b>AccNo:<\/b>\s*(\d{10}-\d{2}-\d{6})/g;
+      let m;
+      while ((m = accPattern.exec(xml)) !== null) {
+        const accNo = m[1];
+        // The form type, date, and index URL all appear BEFORE the AccNo in the same entry block.
+        // Look back up to 2000 chars to find the start of this entry's text.
+        const blockStart = Math.max(0, m.index - 2000);
+        const block = xml.slice(blockStart, m.index + accNo.length + 100);
+
+        // Index URL: last href="....-index.htm" before AccNo
+        const idxMatches = [...block.matchAll(/href="(https?:\/\/[^"]+?-index\.htm)"/gi)];
+        const indexUrl = idxMatches.length > 0
+          ? idxMatches[idxMatches.length - 1][1]
+          : `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo.replace(/-/g, "")}/${accNo}-index.htm`;
+
+        // Filed date: last "<b>Filed:</b> YYYY-MM-DD" before AccNo
+        const filedMatches = [...block.matchAll(/<b>Filed:<\/b>\s*(\d{4}-\d{2}-\d{2})/gi)];
+        const date = filedMatches.length > 0 ? filedMatches[filedMatches.length - 1][1] : null;
+
+        // Form type: strip HTML, find last "FORMTYPE - Description" pattern before the Filed line.
+        // In the real feed this looks like: "424B3 - Prospectus [Rule 424(b)(3)]" or "EFFECT - Notice..."
+        const lastFiledIdx = block.lastIndexOf("<b>Filed:</b>");
+        const preBlock = lastFiledIdx > 0 ? block.slice(0, lastFiledIdx) : block;
+        const plainPre = preBlock.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+        // Match known form types followed by " - " description
+        const formMatch = plainPre.match(/\b(424B\d*|POS\s*AM(?:\/A)?|EFFECT|S-\d+(?:\/A)?|F-\d+(?:\/A)?)\s*(?:\[[^\]]*\])?\s*-\s/i);
+        const form = formMatch ? formMatch[1].replace(/\s+/g, " ").trim().toUpperCase() : null;
+
+        if (!accNo || !date || !form) continue;
+        entries.push({ accNo, date, form, indexUrl });
+      }
+      return entries;
+    };
+
+    // All filings under this file number from EDGAR
+    let allFileNumEntries = [];
     if (regFileNumber) {
       try {
-        const fileNumUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum=${encodeURIComponent(regFileNumber)}&type=&dateb=&owner=include&count=100&search_text=&output=atom`;
-        const fileNumRes = await fetch(fileNumUrl, { headers: HEADERS });
-        if (fileNumRes.ok) {
-          const atomXml = await fileNumRes.text();
-          // The Atom feed has consistent patterns per entry:
-          // AccNo: appears as "AccNo:</b> 0001213900-25-079439"
-          // Index URL appears as href on the Documents link: ".../0001213900-25-079439-index.htm"
-          // Form type appears in the title: "424B3 - Prospectus..." or "POS AM - Post-Effective..."
-          // Filed date appears as "Filed:</b> 2025-08-21"
-          //
-          // Strategy: split by accession number pattern, then extract form+date from surrounding text
-          const accPattern = /AccNo:<\/b>\s*([\d][\d-]{17,19})/g;
-          let accMatch;
-          while ((accMatch = accPattern.exec(atomXml)) !== null) {
-            const accession = accMatch[1].trim();
-            // Get a window of text around this accession number to extract form and date
-            const windowStart = Math.max(0, accMatch.index - 2000);
-            const windowEnd = Math.min(atomXml.length, accMatch.index + 200);
-            const window = atomXml.slice(windowStart, windowEnd);
-
-            // Extract index URL (appears before AccNo in the same entry)
-            const indexUrlMatch = window.match(/href="(https?:\/\/[^"]+?-index\.htm)"/i);
-            const indexUrl = indexUrlMatch?.[1] || 
-              `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accession.replace(/-/g,"")}/0${accession.replace(/-/g,"")}-index.htm`;
-
-            // Extract form type — appears as first word(s) before " - " in the title-like text
-            // Pattern: "424B3 - Prospectus" or "POS AM - Post-Effective"
-            const formMatch = window.match(/>(424B\d*|POS AM|PROSPECTUS|S-\d+[\/A]*|EFFECT)\s*(?:\[.*?\])?\s*(?:-|<)/i);
-            const form = formMatch?.[1]?.trim().toUpperCase() || "";
-
-            // Extract date: "Filed:</b> 2025-08-21"
-            const dateMatch = window.match(/Filed:<\/b>\s*(\d{4}-\d{2}-\d{2})/);
-            const date = dateMatch?.[1] || "";
-
-            if (!form || !date || !accession) continue;
-            if (!isProspectusOrPosAm({ form })) continue;
-            if (date < selectedReg.date) continue;
-
-            // Avoid duplicates
-            if (allUpdatesWithThisFileNumber.some(u => u.accession === accession)) continue;
-
-            allUpdatesWithThisFileNumber.push({
-              form,
-              date,
-              accession,
-              doc: "",
-              fileNumber: regFileNumber,
-              cik,
-              indexUrl,
-              size: 0,
-            });
-          }
+        const url = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum=${encodeURIComponent(regFileNumber)}&type=&dateb=&owner=include&count=100&search_text=&output=atom`;
+        const res = await fetch(url, { headers: HEADERS });
+        if (res.ok) {
+          allFileNumEntries = parseFileNumFeed(await res.text());
         }
-      } catch (_) { /* continue with empty list */ }
+      } catch (_) { /* proceed with empty */ }
     }
 
-    // Also add any locally-matched filings (submissions.json entries where fileNumber is populated)
-    for (const f of subsequentFilings.filter(f => isProspectusOrPosAm(f) && belongsToThisReg(f))) {
-      const accClean = f.accession?.replace(/-/g, "");
-      if (!allUpdatesWithThisFileNumber.some(u => u.accession?.replace(/-/g, "") === accClean)) {
-        allUpdatesWithThisFileNumber.push(f);
-      }
-    }
+    // EFFECT notices from the authoritative feed (scoped to this registration's file number)
+    const fileNumEffectFilings = allFileNumEntries
+      .filter(e => e.form === "EFFECT")
+      .map(e => ({ form: e.form, date: e.date, accession: e.accNo, fileNumber: regFileNumber, cik, indexUrl: e.indexUrl }));
 
-    // Sort by date descending
-    allUpdatesWithThisFileNumber.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    // All prospectus/POS AM updates for this registration
+    const allUpdatesWithThisFileNumber = allFileNumEntries
+      .filter(e => isProspectusOrPosAm({ form: e.form }))
+      .map(e => ({ form: e.form, date: e.date, accession: e.accNo, doc: "", fileNumber: regFileNumber, cik, indexUrl: e.indexUrl }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    // POS AM effectiveness: check against EFFECT notices from this registration's file number feed
+    const isPosAmEffectiveFromFeed = (posAm) => {
+      const posDate = new Date(posAm.date);
+      return fileNumEffectFilings.some(e => {
+        const eDate = new Date(e.date);
+        return eDate >= posDate && (eDate - posDate) <= 60 * 24 * 60 * 60 * 1000;
+      });
+    };
 
     // Post-effective amendments (POS AM)
     const allPostEffectiveAmendments = allUpdatesWithThisFileNumber.filter(f =>
       POST_EFFECTIVE_FORMS.includes(f.form?.toUpperCase().trim())
     );
-    const effectivePostEffectiveAmendments = allPostEffectiveAmendments.filter(isPosAmEffective);
-    const pendingPostEffectiveAmendments = allPostEffectiveAmendments.filter(f => !isPosAmEffective(f));
+    const effectivePostEffectiveAmendments = allPostEffectiveAmendments.filter(isPosAmEffectiveFromFeed);
+    const pendingPostEffectiveAmendments = allPostEffectiveAmendments.filter(f => !isPosAmEffectiveFromFeed(f));
     const latestPostEffective = effectivePostEffectiveAmendments[0] || null;
     const latestPendingPosAm = pendingPostEffectiveAmendments[0] || null;
 
@@ -582,7 +579,8 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
     const checks = [];
 
     // ── CHECK A: Is the registration effective? ───────────────────────────────
-    const effectiveness = isLikelyEffective(selectedReg);
+    // Use authoritative EFFECT notices from the file-number feed when available
+    const effectiveness = isLikelyEffective(selectedReg, fileNumEffectFilings);
     const effectiveDate = effectiveness.effective && effectiveness.effectDate
       ? new Date(effectiveness.effectDate) : regDate;
     const daysSinceEffective = Math.floor((new Date() - effectiveDate) / (1000 * 60 * 60 * 24));
