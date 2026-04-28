@@ -625,6 +625,8 @@ Document excerpt (first 15000 chars):\n${updateText.slice(0, 15000)}`,
     const currentReports = subsequentFilings.filter(f => f.form?.startsWith("8-K"));
     const latestCurrent = currentReports[0] || null;
 
+
+
     // Pick whichever is more recent: the latest effective POS AM or the latest 424B prospectus
     const mostRecentEffectiveUpdate = (() => {
       if (!latestPostEffective && !latestProspectus) return null;
@@ -954,7 +956,13 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       let annualFiscalYearEnd = null;
       let sourceInfo = null;
 
-      if (prospectusIncorporatedDate) {
+      if (hasForwardIBR && latestAnnual) {
+        // Forward IBR overrides everything: the latest 10-K is automatically incorporated
+        // regardless of what the 424B/POS AM scan found. 424B supplements are often short
+        // documents that don't contain full FS — the LLM extraction is unreliable for them.
+        annualFiscalYearEnd = latestAnnual.date;
+        sourceInfo = `${latestAnnual.form} filing date ${latestAnnual.date} — auto-incorporated via forward IBR clause (takes precedence over prospectus supplement scan)`;
+      } else if (prospectusIncorporatedDate) {
         // BEST CASE: LLM extracted actual fiscal year-end from prospectus supplement / POS AM
         annualFiscalYearEnd = prospectusIncorporatedDate;
         sourceInfo = `fiscal year-end ${prospectusIncorporatedDate} extracted from the live prospectus (${mostRecentEffectiveUpdate?.form} ${mostRecentEffectiveUpdate?.date})`;
@@ -1283,6 +1291,8 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
     const overallStatus =
       checks.some(c => c.status === "fail") ? "fail" :
       checks.some(c => c.status === "warn") ? "warn" : "pass";
+
+
 
     const checkSummary = checks.map(c => `[${c.status.toUpperCase()}] ${c.label}: ${c.detail}`).join("\n");
 
