@@ -140,24 +140,6 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-10">
-        {/* Upload Section */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="mb-5">
-            <h2 className="font-display text-2xl font-semibold text-foreground">Upload Filing</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Drop any SEC filing to get a comprehensive financial analysis
-            </p>
-          </div>
-          <FileUploader
-            onFileSelected={(file) => analyzeMutation.mutate({ file })}
-            onUrlSubmitted={(url) => analyzeMutation.mutate({ url })}
-            isProcessing={isProcessing}
-          />
-        </motion.section>
-
         {/* Registration Statement Currency Checker */}
         <motion.section
           initial={{ opacity: 0, y: 20 }}
