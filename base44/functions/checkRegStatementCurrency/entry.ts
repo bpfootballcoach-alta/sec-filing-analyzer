@@ -175,90 +175,9 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     const selectedReg = filings.find(f => f.accession === accession);
     if (!selectedReg) return Response.json({ error: "Registration statement not found" }, { status: 404 });
 
-    // ── Fetch securities registered from fee table ────────────────────────────
-    // ALWAYS extract this—it tells us what's ACTUALLY being registered
+    // securitiesRegistered will be extracted from the document cover page text below
+    // (after the main doc is fetched for IBR analysis — no separate fetch needed)
     let securitiesRegistered = null;
-    try {
-      const accNo = accession.replace(/-/g, "");
-      let feeFilename = null;
-      
-      // Try JSON index first
-      const jsonIdxRes = await fetch(
-        `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.json`,
-        { headers: HEADERS }
-      ).catch(() => null);
-      if (jsonIdxRes?.ok) {
-        const jsonIdx = await jsonIdxRes.json().catch(() => null);
-        if (jsonIdx?.documents) {
-          const feeDoc = jsonIdx.documents.find(d =>
-            d.type?.toUpperCase().includes("EX-FILING FEE") || d.type?.toUpperCase().includes("EX-FILING FEES") || d.description?.toUpperCase().includes("FILING FEE")
-          );
-          if (feeDoc) feeFilename = feeDoc.filename;
-        }
-      }
-      
-      // Fall back to HTML index
-      if (!feeFilename) {
-      const htmIdxRes = await fetch(
-      `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${accession}-index.htm`,
-      { headers: HEADERS }
-      ).catch(() => null);
-      if (htmIdxRes?.ok) {
-      const idxHtml = await htmIdxRes.text();
-      for (const row of (idxHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [])) {
-        if (/EX-FILING FEE/i.test(row)) {
-          // Match any .htm file in the row
-          const m = row.match(/href="([^"]*\.htm)"/i);
-          if (m) {
-            // Could be a full path or just a filename
-            feeFilename = m[1].includes("/") ? m[1].split("/").pop() : m[1];
-            break;
-          }
-        }
-      }
-      }
-      }
-      
-      // If no exhibit found, try the main registration document itself (cover page contains fee table on S-1/S-3/F-1)
-      if (!feeFilename) {
-        feeFilename = selectedReg.doc;
-      }
-      
-      if (feeFilename) {
-        const feeRes = await fetch(`https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNo}/${feeFilename}`, { headers: HEADERS });
-        if (feeRes.ok) {
-          const feeText = (await feeRes.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-          securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `Extract ALL securities from this SEC filing fee table or cover page "Securities Being Registered" section. For EACH security class, extract:
-- security_class: e.g. "Class A Common Stock", "Warrants", "Preferred Stock"
-- offering_type: "Newly Registered" OR "For Resale" OR "Underlying" (for warrant exercise shares)
-- amount_registered: number of shares/units
-- price_per_unit: offering price per unit (may be null)
-- aggregate_offering_price: total offering amount (may be null)
-
-Also provide:
-- label: short summary (5-10 words) of what's being registered
-- summary: 1-2 sentence description of the offerings
-- total_aggregate_offering_price: sum of all offerings
-- offering_types: comma-separated list of offering categories present
-
-Fee table / cover page:\n${feeText.slice(0, 8000)}`,
-            response_json_schema: {
-              type: "object",
-              properties: {
-                label: { type: "string" }, summary: { type: "string" },
-                securities: { type: "array", items: { type: "object", properties: {
-                  security_class: { type: "string" }, offering_type: { type: "string" },
-                  amount_registered: { type: "string" }, price_per_unit: { type: "string" },
-                  aggregate_offering_price: { type: "string" }
-                }}},
-                total_aggregate_offering_price: { type: "string" }, offering_types: { type: "string" }
-              }
-            }
-          });
-        }
-      }
-    } catch (_) { /* non-critical */ }
 
     // ── Issuer / form classification ─────────────────────────────────────────
     const regDate = new Date(selectedReg.date);
@@ -407,6 +326,46 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
             }
           });
           regIBRInfo = ibr;
+
+          // ── Extract securities being registered from the cover page ──────────
+          // Use the cover page text (first 8000 chars of the plain text) which always
+          // contains the "Securities Being Registered" section on S-1, S-3, S-4, etc.
+          try {
+            const coverText = plainText.slice(0, 10000);
+            securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
+              prompt: `Read this SEC registration statement cover page and extract what securities are being registered.
+
+For EACH security class listed, extract:
+- security_class: e.g. "Class A Common Stock", "Warrants to Purchase Common Stock", "Units"
+- offering_type: "Primary" (company selling new shares), "Resale" (selling shareholders), or "Underlying" (shares issuable on exercise of warrants/options)
+- amount_registered: number of shares/units if stated
+- price_per_unit: offering price per unit if stated (may be null)
+- aggregate_offering_price: total offering amount if stated (may be null)
+
+Also provide:
+- label: 5-10 word plain-English summary of what is being registered (e.g. "Common stock and warrants — resale by selling shareholders")
+- summary: 1-2 sentence description of the offering
+- offering_types: comma-separated list: Primary, Resale, Underlying (only those present)
+
+IMPORTANT: Read the actual "Securities Being Registered" or "Title of Each Class of Securities" table from the document. Do NOT guess.
+
+Cover page text:
+${coverText}`,
+              response_json_schema: {
+                type: "object",
+                properties: {
+                  label: { type: "string" }, summary: { type: "string" },
+                  securities: { type: "array", items: { type: "object", properties: {
+                    security_class: { type: "string" }, offering_type: { type: "string" },
+                    amount_registered: { type: "string" }, price_per_unit: { type: "string" },
+                    aggregate_offering_price: { type: "string" }
+                  }}},
+                  offering_types: { type: "string" }
+                }
+              }
+            });
+          } catch (_) { /* non-critical */ }
+
           // Update prospectus dates from actual FS in the reg document
           if (ibr?.most_recent_interim_date && /^\d{4}-\d{2}-\d{2}$/.test(ibr.most_recent_interim_date)) {
             prospectusInterimPeriodEndDate = ibr.most_recent_interim_date;
@@ -437,15 +396,11 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
     //
     // ADDITIONAL HARD CHECK: If the fee table shows warrants or warrant shares registered,
     // it is definitively an ongoing offering — override the LLM determination.
-    const feeTableHasWarrants = securitiesRegistered?.securities?.some(s => {
-      const cls = (s.security_class || "").toLowerCase();
-      return cls.includes("warrant") || cls.includes("warrant share") || cls.includes("underlying");
-    }) || (securitiesRegistered?.label || "").toLowerCase().includes("warrant")
-      || (securitiesRegistered?.summary || "").toLowerCase().includes("warrant");
-
-    const isTransactionReg = isSorFFourBase && !feeTableHasWarrants && (
+    // isOngoingOffering: determined by LLM reading the actual document cover page.
+    // For S-4/F-4: is_ongoing_offering=false means pure merger — no Section 10(a)(3) obligation.
+    const isTransactionReg = isSorFFourBase && (
       regIBRInfo !== null
-        ? regIBRInfo.is_ongoing_offering === false  // LLM confirmed: not an ongoing offering
+        ? regIBRInfo.is_ongoing_offering === false
         : false  // couldn't read doc — assume ongoing to be conservative
     );
 
