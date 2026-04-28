@@ -181,6 +181,9 @@ export default function RegStatementChecker() {
                       {reg.registrationNumber && (
                         <span className="text-xs font-mono text-muted-foreground">Reg. No. {reg.registrationNumber}</span>
                       )}
+                      {reg.amendmentCount > 0 && (
+                        <span className="text-xs text-muted-foreground">+{reg.amendmentCount} amendment{reg.amendmentCount > 1 ? "s" : ""}</span>
+                      )}
                       {reg.effective === false && (
                         <Badge className="text-xs border-0 bg-red-100 text-red-700">Not Effective</Badge>
                       )}
@@ -191,7 +194,10 @@ export default function RegStatementChecker() {
                     {reg.subject && (
                       <p className="text-xs text-foreground/80 mt-0.5 font-medium">{reg.subject}</p>
                     )}
-                    <p className="text-xs text-muted-foreground mt-0.5">{reg.daysOld} days ago{reg.effectDate ? ` · Effective ${reg.effectDate}` : ""}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {reg.daysOld} days ago{reg.effectDate ? ` · Effective ${reg.effectDate}` : ""}
+                      {reg.originalDate && reg.originalDate !== reg.date ? ` · Originally filed ${reg.originalDate}` : ""}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

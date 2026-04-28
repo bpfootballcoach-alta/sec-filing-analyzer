@@ -144,14 +144,38 @@ Deno.serve(async (req) => {
     };
 
     // ── List mode ─────────────────────────────────────────────────────────────
-    const regFilings = filings.filter(f => {
+    // Collect ALL registration-related filings (base forms + amendments)
+    const allRegFilings = filings.filter(f => {
       const form = f.form?.toUpperCase().trim();
       return REG_FORMS.some(r => form === r || form === r + "/A" || form.startsWith(r + "/"));
     });
 
+    // Group by file number so that S-1 + S-1/A + S-1/A/A are all ONE registration.
+    // For each group, use the MOST RECENT amendment as the representative (it's the live document).
+    // Registrations with no file number fall back to grouping by accession.
+    const regGroups = new Map(); // fileNumber (or accession) → array of filings
+    for (const f of allRegFilings) {
+      const key = f.fileNumber || f.accession;
+      if (!regGroups.has(key)) regGroups.set(key, []);
+      regGroups.get(key).push(f);
+    }
+
+    // For each group, sort by date descending and take the most recent as the representative
+    const regFilings = [...regGroups.values()].map(group => {
+      group.sort((a, b) => b.date.localeCompare(a.date));
+      const rep = group[0]; // most recent amendment or original
+      // Attach the original (earliest) filing date for reference
+      rep._originalDate = group[group.length - 1].date;
+      rep._originalAccession = group[group.length - 1].accession;
+      rep._amendmentCount = group.length - 1;
+      return rep;
+    });
+    // Sort the de-duped list by the representative's date, newest first
+    regFilings.sort((a, b) => b.date.localeCompare(a.date));
+
     if (!accession) {
       const subjectSummaries = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `For each of the following SEC registration statement filings by ${companyName} (ticker: ${ticker.toUpperCase()}), write a concise label (5-12 words) listing the types of securities being registered and the offering context. Examples: "Common stock — IPO", "Common stock & warrants — resale", "Underlying shares from convertible notes — resale", "Employee stock options — S-8 plan", "Common stock, preferred stock & warrants — shelf offering", "Merger consideration shares — S-4". Focus on security types and whether it's primary, resale/secondary, or merger/plan. If amendment (/A), prepend "Amendment: ". Return a JSON array in the same order.
+        prompt: `For each of the following SEC registration statement filings by ${companyName} (ticker: ${ticker.toUpperCase()}), write a concise label (5-12 words) listing the types of securities being registered and the offering context. Examples: "Common stock — IPO", "Common stock & warrants — resale", "Underlying shares from convertible notes — resale", "Employee stock options — S-8 plan", "Common stock, preferred stock & warrants — shelf offering", "Merger consideration shares — S-4". Focus on security types and whether it's primary, resale/secondary, or merger/plan. Return a JSON array in the same order.
 
 Filings:
 ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description: "${f.description || ""}"`).join("\n")}`,
@@ -162,15 +186,32 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
         mode: "list", ticker: ticker.toUpperCase(), cik, companyName,
         registrationStatements: regFilings.map((f, i) => {
           const eff = isLikelyEffective(f, null); // list mode — no file-number feed
-          return { form: f.form, date: f.date, accession: f.accession, doc: f.doc, url: edgarUrl(f),
+          return {
+            form: f.form, date: f.date, accession: f.accession, doc: f.doc, url: edgarUrl(f),
             daysOld: daysSince(f.date), effective: eff.effective, effectiveReason: eff.reason,
-            effectDate: eff.effectDate || null, registrationNumber: f.fileNumber || null, subject: summaryList[i] || null };
+            effectDate: eff.effectDate || null, registrationNumber: f.fileNumber || null,
+            subject: summaryList[i] || null,
+            amendmentCount: f._amendmentCount || 0,
+            originalDate: f._originalDate || f.date,
+          };
         }),
       });
     }
 
+    // In detail mode, the user may pass the accession of ANY amendment in the family.
+    // Resolve it to the group representative (most recent amendment) so we always
+    // analyse the live document, while using the file number to pull all related filings.
+    const clickedFiling = filings.find(f => f.accession === accession);
+    const resolvedFileNum = clickedFiling?.fileNumber || null;
+    // Find the representative for this file number group
+    const resolvedRep = resolvedFileNum
+      ? regFilings.find(f => f.fileNumber === resolvedFileNum)
+      : regFilings.find(f => f.accession === accession);
+    const resolvedAccession = resolvedRep?.accession || accession;
+
     // ── Detail mode: deep-check the selected registration ────────────────────
-    const selectedReg = filings.find(f => f.accession === accession);
+    // Always use the most recent amendment (resolvedAccession) as the live document.
+    const selectedReg = filings.find(f => f.accession === resolvedAccession) || filings.find(f => f.accession === accession);
     if (!selectedReg) return Response.json({ error: "Registration statement not found" }, { status: 404 });
 
     // securitiesRegistered will be extracted from the document cover page text below
@@ -256,7 +297,7 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     let regIBRInfo = null; // will hold LLM-extracted IBR data from the registration document
     if (selectedReg?.doc) {
       try {
-        const regDocUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accession.replace(/-/g, "")}/${selectedReg.doc}`;
+        const regDocUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${selectedReg.doc}`;
         const regDocRes = await fetch(regDocUrl, { headers: HEADERS });
         if (regDocRes.ok) {
           const regDocText = await regDocRes.text();
