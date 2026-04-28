@@ -416,21 +416,50 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
             balance_sheet_dates: allFSDates.slice(0, 10),
           };
 
-          // ── Extract securities being registered from the cover page ──────────
-          // Use the cover page text (first 8000 chars of the plain text) which always
-          // contains the "Securities Being Registered" section on S-1, S-3, S-4, etc.
+          // ── Extract securities being registered: cover page + EX-FILING FEES exhibit ──
+          // The filing fee table is often in a SEPARATE exhibit (EX-FILING FEES / ex107.htm),
+          // NOT embedded in the main document. Fetch it explicitly from the filing index.
           try {
-            const coverText = plainText.slice(0, 10000);
-            // Also grab a wider window in case the fee table is further in
-            const extendedCoverText = plainText.slice(0, 20000);
+            const coverText = plainText.slice(0, 20000);
+
+            // Fetch the filing index to find the EX-FILING FEES exhibit URL
+            let feeTableText = "";
+            try {
+              const idxUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${resolvedAccession}-index.htm`;
+              const idxRes = await fetch(idxUrl, { headers: HEADERS }).catch(() => null);
+              if (idxRes?.ok) {
+                const idxHtml = await idxRes.text();
+                // Look for EX-FILING FEES or EX-107 exhibit link
+                const feeMatch = idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex10[^"]*?\.htm)"/i)
+                  || idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex107[^"]*?\.htm)"/i)
+                  || idxHtml.match(/EX-FILING FEES[\s\S]{0,300}href="(\/Archives\/edgar\/data\/[^"]+?\.htm)"/i);
+                // More robust: scan all rows for "FILING FEES" type
+                const feeRowMatch = idxHtml.match(/EX-FILING FEES[^<]*<\/td>[^<]*<[^>]*>[^<]*<[^>]*>\s*<a[^>]+href="([^"]+)"/i)
+                  || idxHtml.match(/href="(\/Archives[^"]+ex107[^"]*\.htm)"/i);
+                const feeExhibitPath = feeRowMatch?.[1] || feeMatch?.[1] || null;
+                if (feeExhibitPath) {
+                  const feeUrl = feeExhibitPath.startsWith("http") ? feeExhibitPath : `https://www.sec.gov${feeExhibitPath}`;
+                  const feeRes = await fetch(feeUrl, { headers: HEADERS }).catch(() => null);
+                  if (feeRes?.ok) {
+                    const feeHtml = await feeRes.text();
+                    feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+                  }
+                }
+              }
+            } catch (_) { /* non-critical */ }
+
             securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
-              prompt: `Read this SEC registration statement cover page and extract what securities are being registered.
+              prompt: `Read this SEC registration statement and extract what securities are being registered.
 
-YOUR PRIMARY SOURCE is the FILING FEE TABLE (also called "Table of Registration Fees" or "Calculation of Registration Fee"). This table always appears on or near the cover page and lists every class of securities being registered with exact amounts and offering prices. READ THIS TABLE FIRST.
+You have TWO sources — synthesize BOTH for the most complete picture:
 
-Your secondary source is the narrative text on the cover page describing the offering.
+SOURCE 1 — FILING FEE TABLE (EX-FILING FEES exhibit, authoritative):
+${feeTableText ? feeTableText : "(not available — use cover page only)"}
 
-Synthesize BOTH sources to produce the most complete and accurate picture.
+SOURCE 2 — COVER PAGE / NARRATIVE TEXT:
+${coverText}
+
+The filing fee table ("Calculation of Filing Fee Tables" or "Table of Registration Fees") lists EVERY security class with exact amounts. Use it as the primary source. The cover page narrative provides context.
 
 For EACH security class listed, extract:
 - security_class: e.g. "Class A Common Stock", "Warrants to Purchase Common Stock", "Units"
@@ -440,14 +469,11 @@ For EACH security class listed, extract:
 - aggregate_offering_price: total offering amount if stated (may be null)
 
 Also provide:
-- label: 5-10 word plain-English summary of what is being registered (e.g. "Common stock and warrants — resale by selling shareholders")
+- label: 5-10 word plain-English summary (e.g. "Common stock and warrants — resale by selling shareholders")
 - summary: 1-2 sentence description of the offering
 - offering_types: comma-separated list: Primary, Resale, Underlying (only those present)
 
-IMPORTANT: If the fee table lists securities that are not broken out in the narrative text, still include them. The fee table is authoritative.
-
-Cover page and fee table text:
-${extendedCoverText}`,
+IMPORTANT: If the fee table lists securities not in the narrative, still include them. Fee table is authoritative.`,
               response_json_schema: {
                 type: "object",
                 properties: {
