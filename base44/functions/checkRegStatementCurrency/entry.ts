@@ -1050,77 +1050,93 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
       filingForm: latestPostEffective?.form || latestProspectus?.form || null,
     });
 
-    // ── CHECK C: Section 10(a)(3)(i) — 9-month usability clock (non-shelf) ──
-    // After 9 months from the effective date, the prospectus CANNOT be used for
-    // offers unless it has been updated AND the update reflects FS at least as
-    // current as the most recently filed annual/quarterly report.
+    // ── CHECK C: Section 10(a)(3) — 9-month trigger + Rule 3-12 update test ──
+    //
+    // The 9-month clock is a TRIGGER, not a hard expiry:
+    //   • Before 9 months: prospectus is usable as-is; no update required.
+    //   • After 9 months: prospectus MAY still be used, BUT only if the financial
+    //     information in it satisfies Rule 3-12 / the 16-month maximum age test
+    //     (i.e., the FS in the prospectus are not older than 16 months AND are
+    //     at least as current as the most recently filed periodic report on EDGAR).
+    //
+    // So the test is: past 9 months AND (no update OR update is stale / lagging)?
+    //   → fail if the prospectus has NOT been updated to reflect current FS.
+    //   → pass if updated with FS ≤ 16 months old AND ≥ as current as latest 10-K/10-Q.
+    //   → pass (with note) if still within 9 months.
+    //
     // For shelf OR forward-IBR non-shelf: IBR refreshes automatically.
     // For non-shelf without forward IBR: requires 424B supplement or effective POS AM.
     if (!isShelf) {
-      if (daysSinceEffective > SECTION_10A3_9_MONTHS) {
-        if (hasForwardIBR) {
-          // Forward IBR means all subsequent Exchange Act filings are auto-incorporated —
-          // no 424B or POS AM needed to satisfy Section 10(a)(3)(i).
-          // The 16-month annual FS age cap still applies.
-          const latestIncorporated = latestAnnual || latestQuarterly;
-          checks.push({
-            id: "section10a3_nine_month",
-            label: "Section 10(a)(3)(i) — 9-Month Usability (Forward IBR)",
-            status: "pass",
-            detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago (past 9-month mark). Forward/automatic IBR clause in registration statement auto-incorporates all subsequent Exchange Act filings — no 424B supplement or POS AM required. ${latestIncorporated ? `Most recent auto-incorporated: ${latestIncorporated.form} (${latestIncorporated.date}).` : ""}`,
-            filingDate: latestIncorporated?.date || null, filingUrl: edgarUrl(latestIncorporated), filingForm: latestIncorporated?.form || null,
-          });
-        } else if (!mostRecentEffectiveUpdate) {
-          checks.push({
-            id: "section10a3_nine_month",
-            label: "Section 10(a)(3)(i) — 9-Month Usability Limit",
-            status: "fail",
-            failCode: "prospectus_unusable_past_nine_months_no_update",
-            detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago (${Math.round(daysSinceEffective/30)} months) — past the 9-month limit. No 424B supplement, effective POS AM, or forward IBR clause found. The prospectus CANNOT be used for offers. To restore usability: file a 424B supplement or effective POS AM with current financial statements. NOT CURRENT.`,
-            filingDate: null, filingUrl: null, filingForm: null,
-          });
-        } else {
-          // Update exists — but does it catch up to all later EDGAR filings?
-          const updateDate = new Date(mostRecentEffectiveUpdate.date);
-          const newerAnnual = latestAnnual && new Date(latestAnnual.date) > updateDate ? latestAnnual : null;
-          const newerQuarterly = latestQuarterly && new Date(latestQuarterly.date) > updateDate ? latestQuarterly : null;
-
-          if (newerAnnual) {
-            checks.push({
-              id: "section10a3_nine_month",
-              label: "Section 10(a)(3)(i) — 9-Month Usability: Annual FS Gap",
-              status: "fail",
-              failCode: "section10a3_later_annual_not_incorporated",
-              detail: `Section 10(a)(3)(i): Prospectus last updated ${mostRecentEffectiveUpdate.date} via ${mostRecentEffectiveUpdate.form}. A newer ${newerAnnual.form} (${newerAnnual.date}) was subsequently filed and is NOT incorporated in the live prospectus. Item 512 requires the prospectus to reflect FS at least as current as the latest filed annual report. File a 424B supplement or effective POS AM incorporating the ${newerAnnual.form}. NOT CURRENT.`,
-              filingDate: newerAnnual.date, filingUrl: edgarUrl(newerAnnual), filingForm: newerAnnual.form,
-            });
-          } else if (newerQuarterly) {
-            checks.push({
-              id: "section10a3_nine_month",
-              label: "Section 10(a)(3)(i) — 9-Month Usability: Interim FS Gap",
-              status: "fail",
-              failCode: "section10a3_later_quarterly_not_incorporated",
-              detail: `Section 10(a)(3)(i): Prospectus last updated ${mostRecentEffectiveUpdate.date} via ${mostRecentEffectiveUpdate.form}. A newer ${newerQuarterly.form} (${newerQuarterly.date}) was subsequently filed and is NOT incorporated in the live prospectus. Section 10(a)(3) requires the prospectus to include FS at least as current as the most recently filed 10-Q. File a 424B supplement or effective POS AM incorporating the ${newerQuarterly.form}. NOT CURRENT.`,
-              filingDate: newerQuarterly.date, filingUrl: edgarUrl(newerQuarterly), filingForm: newerQuarterly.form,
-            });
-          } else {
-            checks.push({
-              id: "section10a3_nine_month",
-              label: "Section 10(a)(3)(i) — 9-Month Usability Limit",
-              status: "pass",
-              detail: `Section 10(a)(3)(i): Prospectus effective ${daysSinceEffective} days ago (past 9-month mark). Validly updated ${mostRecentEffectiveUpdate.date} via ${mostRecentEffectiveUpdate.form}${prospectusIncorporatedDate ? `, incorporating FS with fiscal year-end ${prospectusIncorporatedDate}` : ""}. No later 10-K or 10-Q on EDGAR postdates that update. Section 10(a)(3)(i) satisfied.`,
-              filingDate: mostRecentEffectiveUpdate.date, filingUrl: edgarUrl(mostRecentEffectiveUpdate), filingForm: mostRecentEffectiveUpdate.form,
-            });
-          }
-        }
-      } else {
+      if (daysSinceEffective <= SECTION_10A3_9_MONTHS) {
+        // Still within 9-month window — no update required yet
         checks.push({
           id: "section10a3_nine_month",
-          label: "Section 10(a)(3)(i) — 9-Month Usability Limit",
+          label: "Section 10(a)(3) — 9-Month Update Trigger",
           status: "pass",
-          detail: `Section 10(a)(3)(i): Registration effective ${daysSinceEffective} days ago — still within the 9-month usability window (${SECTION_10A3_9_MONTHS} days). No update required yet.${hasForwardIBR ? " Forward IBR clause present — subsequent Exchange Act filings auto-incorporated." : ""}`,
+          detail: `Section 10(a)(3): Registration effective ${daysSinceEffective} days ago — still within the 9-month window. The 9-month clock has not yet triggered the requirement to update the prospectus with financial statements compliant with Rule 3-12 / the 16-month maximum age test.${hasForwardIBR ? " Forward IBR clause present — subsequent Exchange Act filings are auto-incorporated in any event." : ""}`,
           filingDate: null, filingUrl: null, filingForm: null,
         });
+      } else if (hasForwardIBR) {
+        // Past 9 months but forward IBR auto-incorporates all subsequent Exchange Act filings.
+        // The 16-month FS age cap (already checked above as CHECK B) remains the binding test.
+        const latestIncorporated = latestAnnual || latestQuarterly;
+        checks.push({
+          id: "section10a3_nine_month",
+          label: "Section 10(a)(3) — Post-9-Month Update Requirement (Forward IBR Satisfied)",
+          status: "pass",
+          detail: `Section 10(a)(3): Registration effective ${daysSinceEffective} days ago — past the 9-month trigger. Forward/automatic IBR clause in registration statement auto-incorporates all subsequent Exchange Act filings (10-K, 10-Q, 8-K), satisfying the Rule 3-12 / 16-month FS currency requirement without a separate 424B or POS AM. ${latestIncorporated ? `Most recent auto-incorporated filing: ${latestIncorporated.form} (${latestIncorporated.date}).` : ""}`,
+          filingDate: latestIncorporated?.date || null, filingUrl: edgarUrl(latestIncorporated), filingForm: latestIncorporated?.form || null,
+        });
+      } else if (!mostRecentEffectiveUpdate) {
+        // Past 9 months, no forward IBR, no update at all.
+        // The prospectus must now be evaluated against Rule 3-12 / 16-month standards.
+        // Since there is NO update whatsoever, the FS in the original prospectus are likely stale.
+        checks.push({
+          id: "section10a3_nine_month",
+          label: "Section 10(a)(3) — Post-9-Month Update Required: No Update Found",
+          status: "fail",
+          failCode: "prospectus_past_nine_months_no_update",
+          detail: `Section 10(a)(3): Registration effective ${daysSinceEffective} days ago (${Math.round(daysSinceEffective/30)} months) — past the 9-month trigger. The prospectus must now be updated so that its financial information complies with Rule 3-12 (FS not older than 16 months and as current as the most recently filed annual/quarterly report). No 424B supplement, effective POS AM, or forward IBR clause found — the FS in the original prospectus have not been updated. File a 424B supplement or effective POS AM incorporating current financial statements.`,
+          filingDate: null, filingUrl: null, filingForm: null,
+        });
+      } else {
+        // Past 9 months AND an update exists.
+        // Now apply Rule 3-12: the update must have FS that are (a) ≤ 16 months old AND
+        // (b) at least as current as the most recently filed 10-K/10-Q on EDGAR.
+        const updateDate = new Date(mostRecentEffectiveUpdate.date);
+        const newerAnnual = latestAnnual && new Date(latestAnnual.date) > updateDate ? latestAnnual : null;
+        const newerQuarterly = latestQuarterly && new Date(latestQuarterly.date) > updateDate ? latestQuarterly : null;
+
+        if (newerAnnual) {
+          // A newer annual report is on EDGAR but not yet incorporated — Rule 3-12 requires it
+          checks.push({
+            id: "section10a3_nine_month",
+            label: "Section 10(a)(3) — Post-9-Month Rule 3-12 Gap: Annual FS Not Current",
+            status: "fail",
+            failCode: "section10a3_later_annual_not_incorporated",
+            detail: `Section 10(a)(3) / Rule 3-12: Registration effective ${daysSinceEffective} days ago (past 9-month trigger). The prospectus was last updated ${mostRecentEffectiveUpdate.date} via ${mostRecentEffectiveUpdate.form}, but a newer ${newerAnnual.form} (${newerAnnual.date}) was subsequently filed on EDGAR and has NOT been incorporated into the live prospectus. Rule 3-12 requires the prospectus to include annual financial statements that are at least as current as the most recently filed annual report. File a 424B supplement or effective POS AM incorporating the ${newerAnnual.form}.`,
+            filingDate: newerAnnual.date, filingUrl: edgarUrl(newerAnnual), filingForm: newerAnnual.form,
+          });
+        } else if (newerQuarterly) {
+          // A newer quarterly is on EDGAR but not yet incorporated — Rule 3-12 requires it
+          checks.push({
+            id: "section10a3_nine_month",
+            label: "Section 10(a)(3) — Post-9-Month Rule 3-12 Gap: Interim FS Not Current",
+            status: "fail",
+            failCode: "section10a3_later_quarterly_not_incorporated",
+            detail: `Section 10(a)(3) / Rule 3-12: Registration effective ${daysSinceEffective} days ago (past 9-month trigger). The prospectus was last updated ${mostRecentEffectiveUpdate.date} via ${mostRecentEffectiveUpdate.form}, but a newer ${newerQuarterly.form} (${newerQuarterly.date}) was subsequently filed on EDGAR and has NOT been incorporated. Rule 3-12 requires the prospectus to include interim financial statements at least as current as the most recently filed quarterly report. File a 424B supplement or effective POS AM incorporating the ${newerQuarterly.form}.`,
+            filingDate: newerQuarterly.date, filingUrl: edgarUrl(newerQuarterly), filingForm: newerQuarterly.form,
+          });
+        } else {
+          // Update exists AND covers the most current EDGAR filings — Rule 3-12 satisfied
+          checks.push({
+            id: "section10a3_nine_month",
+            label: "Section 10(a)(3) — Post-9-Month Rule 3-12 FS Currency: Satisfied",
+            status: "pass",
+            detail: `Section 10(a)(3) / Rule 3-12: Registration effective ${daysSinceEffective} days ago (past 9-month trigger). Prospectus updated ${mostRecentEffectiveUpdate.date} via ${mostRecentEffectiveUpdate.form}${prospectusIncorporatedDate ? `, incorporating FS with fiscal year-end ${prospectusIncorporatedDate}` : ""}. No later 10-K or 10-Q on EDGAR postdates that update — the prospectus FS are as current as required by Rule 3-12. Section 10(a)(3) satisfied.`,
+            filingDate: mostRecentEffectiveUpdate.date, filingUrl: edgarUrl(mostRecentEffectiveUpdate), filingForm: mostRecentEffectiveUpdate.form,
+          });
+        }
       }
     } else {
       // Shelf: IBR via Item 512(a) — later annual reports automatically refresh the prospectus
@@ -1266,17 +1282,23 @@ Summarize in 2-3 sentences: what is the Rule 3-12 issue (if any) and what must h
     const frameworkNote = isShelf
       ? `Shelf (${selectedReg.form}) — Section 10(a)(3) / Item 512(a). Later 10-K/10-Q filings automatically refresh via IBR. Hard cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end of audited FS.`
       : hasForwardIBR
-        ? `Non-shelf (${selectedReg.form}) WITH FORWARD IBR CLAUSE — Section 10(a)(3) / Item 512. The registration statement contains a forward/automatic IBR clause that incorporates all subsequent Exchange Act filings. Hard cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end of audited FS. IBR auto-refresh applies to all 10-K/10-Q/8-K filed after the effective date.`
+        ? `Non-shelf (${selectedReg.form}) WITH FORWARD IBR CLAUSE — Section 10(a)(3) / Item 512. Forward IBR auto-incorporates all subsequent Exchange Act filings. Hard cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end of audited FS.`
         : isFForm
-          ? `F-form (${selectedReg.form}) — Section 10(a)(3). Annual FS cap: ${Math.round(ANNUAL_LIMIT/30)} months from fiscal year-end. 9-month usability limit from effective date. IBR NOT automatic on F-1/F-4 without a forward IBR clause.`
-          : `Domestic non-shelf (${selectedReg.form}) — Section 10(a)(3) / Item 512. Two tests: (a) 16-month hard cap on audited FS fiscal year-end; (b) 9-month usability limit — after 9 months, prospectus unusable unless updated AND updated FS are as current as latest filed 10-K/10-Q. No forward IBR clause detected — a bare 10-Q filing does NOT update the prospectus; requires 424B supplement or effective POS AM.`;
+          ? `F-form (${selectedReg.form}) — Section 10(a)(3) / Rule 3-12. The 9-month clock is a TRIGGER: before 9 months no update required; after 9 months the prospectus must be updated so its FS comply with Rule 3-12 (≤${Math.round(ANNUAL_LIMIT/30)} months old and as current as the most recent EDGAR filing). IBR NOT automatic without a forward IBR clause.`
+          : `Domestic non-shelf (${selectedReg.form}) — Section 10(a)(3) / Rule 3-12 / Item 512. The 9-month clock is a TRIGGER, not an automatic expiry. Before 9 months: prospectus usable as-is. After 9 months: the prospectus must be updated so its financial information complies with Rule 3-12 — FS must be ≤${Math.round(ANNUAL_LIMIT/30)} months old AND as current as the most recently filed annual/quarterly report on EDGAR. No forward IBR — update requires 424B supplement or effective POS AM.`;
 
     const aiSummary = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt: `Securities law compliance expert. This registration is ALREADY EFFECTIVE. Apply Section 10(a)(3) and Item 512 post-effectiveness currency analysis only. Rule 3-12 does NOT apply here.
+      prompt: `Securities law compliance expert. This registration is ALREADY EFFECTIVE. Apply Section 10(a)(3) and Rule 3-12 post-effectiveness currency analysis.
+
+CRITICAL FRAMING — Section 10(a)(3) correctly understood:
+- The 9-month clock is a TRIGGER TEST, not an automatic expiry.
+- Before 9 months from the effective date: prospectus is usable as-is; no update required.
+- After 9 months: the prospectus MUST be updated so its financial information is (a) no older than ${Math.round(ANNUAL_LIMIT/30)} months (the 16-month maximum age test) AND (b) at least as current as the most recently filed annual/quarterly report on EDGAR (Rule 3-12 standard).
+- A prospectus that is past 9 months old but HAS been validly updated with current FS IS current — do NOT say it is "not current" merely because it is past 9 months.
 
 Framework: ${frameworkNote}
 
-CURRENT = (a) audited FS fiscal year-end within ${Math.round(ANNUAL_LIMIT/30)} months AND (b) if past 9 months from effective date: prospectus updated with FS as current as latest EDGAR 10-K/10-Q. "fail" = NOT CURRENT. "warn" = usable but requires remediation. "pass" = CURRENT.
+CURRENT = (a) audited FS ≤ ${Math.round(ANNUAL_LIMIT/30)} months old AND (b) if past 9-month trigger: prospectus has been updated with FS at least as current as latest EDGAR 10-K/10-Q. "fail" = NOT CURRENT. "warn" = usable but action needed soon. "pass" = CURRENT.
 
 Company: ${companyName} (${ticker.toUpperCase()}) | Form: ${selectedReg.form} filed ${selectedReg.date} | Effective: ${effectiveDate.toISOString().split("T")[0]} (${daysSinceEffective} days ago) | Shelf: ${isShelf} | FPI: ${isFPI}
 
