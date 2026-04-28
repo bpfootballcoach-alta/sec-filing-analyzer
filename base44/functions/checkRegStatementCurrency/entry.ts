@@ -421,8 +421,16 @@ Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringS
           // contains the "Securities Being Registered" section on S-1, S-3, S-4, etc.
           try {
             const coverText = plainText.slice(0, 10000);
+            // Also grab a wider window in case the fee table is further in
+            const extendedCoverText = plainText.slice(0, 20000);
             securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
               prompt: `Read this SEC registration statement cover page and extract what securities are being registered.
+
+YOUR PRIMARY SOURCE is the FILING FEE TABLE (also called "Table of Registration Fees" or "Calculation of Registration Fee"). This table always appears on or near the cover page and lists every class of securities being registered with exact amounts and offering prices. READ THIS TABLE FIRST.
+
+Your secondary source is the narrative text on the cover page describing the offering.
+
+Synthesize BOTH sources to produce the most complete and accurate picture.
 
 For EACH security class listed, extract:
 - security_class: e.g. "Class A Common Stock", "Warrants to Purchase Common Stock", "Units"
@@ -436,10 +444,10 @@ Also provide:
 - summary: 1-2 sentence description of the offering
 - offering_types: comma-separated list: Primary, Resale, Underlying (only those present)
 
-IMPORTANT: Read the actual "Securities Being Registered" or "Title of Each Class of Securities" table from the document. Do NOT guess.
+IMPORTANT: If the fee table lists securities that are not broken out in the narrative text, still include them. The fee table is authoritative.
 
-Cover page text:
-${coverText}`,
+Cover page and fee table text:
+${extendedCoverText}`,
               response_json_schema: {
                 type: "object",
                 properties: {
