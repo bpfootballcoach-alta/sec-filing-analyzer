@@ -360,42 +360,65 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
 
 
 
-          // Search for IBR section by looking for the keyword anywhere in the full text
-          const ibrKeyword = /incorporat\w*\s+by\s+reference|where\s+you\s+can\s+find\s+more\s+information/gi;
-          let ibrSnippet = "";
-          let match;
-          const snippets = [];
-          while ((match = ibrKeyword.exec(plainText)) !== null) {
-            const start = Math.max(0, match.index - 200);
-            const end = Math.min(plainText.length, match.index + 3000);
-            snippets.push(plainText.slice(start, end));
-            if (snippets.length >= 5) break;
+          // ── IBR section detection: look for the explicit heading first ──────────
+          // SEC filings use headings like:
+          //   "INCORPORATION OF CERTAIN DOCUMENTS BY REFERENCE"
+          //   "INCORPORATION BY REFERENCE"
+          //   "DOCUMENTS INCORPORATED BY REFERENCE"
+          // This heading is the most reliable signal of a dedicated IBR section.
+          // We extract a large window (up to 6000 chars) after each heading hit.
+          const ibrHeadingPat = /\b(INCORPORATION\s+(?:OF\s+(?:CERTAIN\s+)?DOCUMENTS?\s+)?BY\s+REFERENCE|DOCUMENTS?\s+INCORPORATED\s+BY\s+REFERENCE)\b/gi;
+          const ibrHeadingSnippets = [];
+          let headingMatch;
+          while ((headingMatch = ibrHeadingPat.exec(plainText)) !== null) {
+            const start = Math.max(0, headingMatch.index - 100);
+            const end = Math.min(plainText.length, headingMatch.index + 6000);
+            ibrHeadingSnippets.push(`[HEADING FOUND: "${headingMatch[0]}"]\n${plainText.slice(start, end)}`);
+            if (ibrHeadingSnippets.length >= 3) break;
           }
-          ibrSnippet = snippets.join("\n\n---\n\n");
 
-          // Grab last 8000 chars where IBR sections often appear at end of S-4
-          const tailText = plainText.slice(-8000);
+          // Fallback: broader keyword search if no heading found
+          let ibrSnippet = "";
+          if (ibrHeadingSnippets.length > 0) {
+            ibrSnippet = ibrHeadingSnippets.join("\n\n---\n\n");
+          } else {
+            const ibrKeyword = /incorporat\w*\s+by\s+reference|where\s+you\s+can\s+find\s+more\s+information/gi;
+            let match;
+            const snippets = [];
+            while ((match = ibrKeyword.exec(plainText)) !== null) {
+              const start = Math.max(0, match.index - 200);
+              const end = Math.min(plainText.length, match.index + 3000);
+              snippets.push(plainText.slice(start, end));
+              if (snippets.length >= 4) break;
+            }
+            ibrSnippet = snippets.join("\n\n---\n\n");
+          }
+
+          // Grab last 6000 chars where IBR sections often appear at end of S-4
+          const tailText = plainText.slice(-6000);
 
           const contextToAnalyze = ibrSnippet
-            ? `EXTRACTED IBR-RELEVANT SECTIONS (found by keyword search):\n${ibrSnippet.slice(0, 12000)}\n\nDOCUMENT TAIL (last portion):\n${tailText}`
-            : `No IBR keyword found in document. Document tail:\n${tailText}`;
+            ? `IBR SECTION(S) EXTRACTED FROM DOCUMENT:\n${ibrSnippet.slice(0, 14000)}\n\nDOCUMENT TAIL:\n${tailText}`
+            : `No IBR heading found in document. Document tail:\n${tailText}`;
 
           const offeringSnippet = plainText.slice(0, 5000) + "\n\n" + plainText.slice(-3000);
 
           const ibr = await base44.asServiceRole.integrations.Core.InvokeLLM({
-            prompt: `You are reviewing an SEC registration statement. Extract:
+            prompt: `You are reviewing an SEC registration statement. Extract the following from the IBR section text provided.
 
-1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section? (true/false)
+CRITICAL: SEC registration statements that incorporate documents by reference will have an explicit section with a heading like "INCORPORATION OF CERTAIN DOCUMENTS BY REFERENCE" or "INCORPORATION BY REFERENCE" or "DOCUMENTS INCORPORATED BY REFERENCE". If such a heading is present in the text below, that is definitive proof that HAS_IBR_SECTION is true.
 
-2. FORWARD_IBR: Does it contain automatic forward IBR language for future Exchange Act filings? (true/false)
+1. HAS_IBR_SECTION: Is there a dedicated "Incorporation by Reference" section with an explicit heading? (true/false). Set to true if you see any such heading in the extracted text.
 
-3. SPECIFIC_ANNUAL_INCORPORATED: Fiscal year-end (YYYY-MM-DD) of specifically NAMED 10-K/20-F in IBR, else null.
+2. FORWARD_IBR: Does the IBR section contain language that automatically incorporates ALL FUTURE filings made with the SEC after the date of the registration statement? Look for phrases like "all documents subsequently filed", "all reports filed after the date of this prospectus", "future filings under Section 13 or 15(d)", or similar forward-looking incorporation language. This is DIFFERENT from merely listing specific named documents. (true/false)
+
+3. SPECIFIC_ANNUAL_INCORPORATED: If a specific 10-K or 20-F is named in the IBR section by its fiscal year-end date (e.g. "Annual Report on Form 10-K for the fiscal year ended December 31, 2024"), extract that fiscal year-end as YYYY-MM-DD. Else null.
 
 4. IS_ONGOING_OFFERING: (true/false) Is this prospectus for ongoing offers? Return TRUE if warrants, resale, or continuous offerings are registered. Return FALSE only if ONLY merger consideration shares, NO warrants, NO resale.
 
-NOTE: FS dates (most_recent_annual_date, most_recent_interim_date) will be pre-populated from direct regex extraction — you do NOT need to find them.
+NOTE: FS dates will be pre-populated from direct regex extraction — you do NOT need to find them.
 
-Extracted text:\n${contextToAnalyze.slice(0, 12000)}\n\nCOVER PAGE:\n${offeringSnippet.slice(0, 3000)}`,
+Extracted text:\n${contextToAnalyze.slice(0, 14000)}\n\nCOVER PAGE:\n${offeringSnippet.slice(0, 3000)}`,
             response_json_schema: {
               type: "object",
               properties: {
