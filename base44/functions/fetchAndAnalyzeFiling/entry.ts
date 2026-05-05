@@ -88,21 +88,113 @@ Deno.serve(async (req) => {
       return Response.json(result);
     }
 
-    const { url } = body;
+    const { url, cik: bodyCik, accession } = body;
     if (!url) return Response.json({ error: "url or ticker is required" }, { status: 400 });
 
-    // Resolve the actual document URL (handles SEC EDGAR /ix?doc= viewer URLs)
-    const resolvedUrl = resolveEdgarUrl(url);
+    // Extract CIK from SEC EDGAR URL if not provided
+    // URL pattern: /Archives/edgar/data/{CIK}/{accession}/{file}
+    let cik = bodyCik;
+    if (!cik) {
+      const cikMatch = url.match(/edgar\/data\/(\d+)\//);
+      if (cikMatch) cik = cikMatch[1];
+    }
 
-    // Fetch the filing from SEC EDGAR with retries (SEC can 503 on first hit)
+    // Extract accession number from URL if not provided
+    let accessionNum = accession;
+    if (!accessionNum) {
+      const accMatch = url.match(/edgar\/data\/\d+\/(\d{18})\//);
+      if (accMatch) accessionNum = accMatch[1];
+    }
+
+    // --- STRATEGY 1: Try SEC XBRL companyfacts API for clean structured financial data ---
+    let xbrlSummary = "";
+    if (cik) {
+      try {
+        const factsRes = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, "0")}.json`, { headers: SEC_HEADERS });
+        if (factsRes.ok) {
+          const facts = await factsRes.json();
+          const usgaap = facts.facts?.["us-gaap"] || {};
+          const dei = facts.facts?.["dei"] || {};
+
+          // Extract key financial concepts
+          const concepts = [
+            // Balance sheet
+            ["Assets", "Total Assets"],
+            ["Liabilities", "Total Liabilities"],
+            ["LiabilitiesAndStockholdersEquity", "Total Liabilities & Equity"],
+            ["StockholdersEquity", "Total Stockholders Equity"],
+            ["CashAndCashEquivalentsAtCarryingValue", "Cash & Cash Equivalents"],
+            ["CashCashEquivalentsAndShortTermInvestments", "Cash & Short-term Investments"],
+            ["LongTermDebt", "Long-term Debt"],
+            ["LongTermDebtNoncurrent", "Long-term Debt (noncurrent)"],
+            ["ShortTermBorrowings", "Short-term Borrowings"],
+            ["DebtCurrent", "Current Debt"],
+            // Income
+            ["Revenues", "Total Revenues"],
+            ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenue"],
+            ["SalesRevenueNet", "Net Sales"],
+            ["GrossProfit", "Gross Profit"],
+            ["OperatingIncomeLoss", "Operating Income"],
+            ["NetIncomeLoss", "Net Income"],
+            ["EarningsPerShareBasic", "EPS Basic"],
+            ["EarningsPerShareDiluted", "EPS Diluted"],
+            // Cash flow
+            ["NetCashProvidedByUsedInOperatingActivities", "Operating Cash Flow"],
+            ["NetCashProvidedByUsedInInvestingActivities", "Investing Cash Flow"],
+            ["NetCashProvidedByUsedInFinancingActivities", "Financing Cash Flow"],
+            // Shares
+            ["CommonStockSharesOutstanding", "Shares Outstanding"],
+          ];
+
+          const lines = [];
+          const currentYear = new Date().getFullYear();
+
+          for (const [concept, label] of concepts) {
+            const data = usgaap[concept];
+            if (!data?.units) continue;
+            const units = data.units;
+            const unitKey = Object.keys(units)[0];
+            if (!unitKey) continue;
+            const entries = units[unitKey];
+            if (!entries?.length) continue;
+
+            // Get most recent annual or point-in-time value
+            // Prefer 10-K filings (form contains "10-K") and most recent
+            const annual = entries
+              .filter(e => e.form && (e.form === "10-K" || e.form === "10-K/A"))
+              .sort((a, b) => (b.end || b.filed || "").localeCompare(a.end || a.filed || ""));
+
+            const recent = annual[0] || entries.sort((a, b) => (b.end || b.filed || "").localeCompare(a.end || a.filed || ""))[0];
+            if (!recent) continue;
+
+            const val = unitKey === "USD"
+              ? `$${(recent.val / 1e6).toFixed(2)}M`
+              : unitKey === "shares"
+              ? `${recent.val.toLocaleString()} shares`
+              : `${recent.val} ${unitKey}`;
+
+            lines.push(`${label}: ${val} (period: ${recent.end || recent.filed || "?"}, filed: ${recent.form || "?"})`);
+          }
+
+          if (lines.length > 0) {
+            xbrlSummary = "=== STRUCTURED FINANCIAL DATA (from SEC XBRL) ===\n" + lines.join("\n") + "\n\n";
+          }
+        }
+      } catch (_e) {
+        // XBRL fetch failed — will fall back to HTML text
+      }
+    }
+
+    // --- STRATEGY 2: Fetch the actual filing HTML for narrative content ---
+    const resolvedUrl = resolveEdgarUrl(url);
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
     let res;
     for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await sleep(2000 * attempt); // 2s, then 4s
+      if (attempt > 0) await sleep(2000 * attempt);
       res = await fetch(resolvedUrl, { headers: SEC_HEADERS });
       if (res.ok) break;
-      if (res.status !== 503 && res.status !== 429) break; // only retry on rate-limit errors
+      if (res.status !== 503 && res.status !== 429) break;
     }
 
     if (!res.ok) {
@@ -110,76 +202,44 @@ Deno.serve(async (req) => {
     }
 
     const text = await res.text();
-
     if (!text || text.length < 100) {
       return Response.json({ error: "Fetched content is empty or too short" }, { status: 502 });
     }
 
-    // Strip HTML/XBRL aggressively, preserving financial table content
-    // SEC filings with inline XBRL can be 4MB+ of raw HTML
+    // Strip iXBRL/HTML — remove hidden XBRL header block first
     let html = text;
-
-    // Remove the hidden XBRL data block at the top of iXBRL documents
-    // This block appears as <ix:header>...</ix:header> or a <div style="display:none"> before the visible content
     html = html.replace(/<ix:header[\s\S]*?<\/ix:header>/gi, "");
     html = html.replace(/<div[^>]+style="[^"]*display\s*:\s*none[^"]*"[\s\S]*?<\/div>/gi, "");
 
     let stripped = html
-      // Remove scripts and styles
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      // Remove inline XBRL ix: tags but keep their text content
       .replace(/<ix:[^>]*>/gi, "")
       .replace(/<\/ix:[^>]*>/gi, "")
-      // Preserve table/paragraph structure with newlines
       .replace(/<\/tr>/gi, "\n")
       .replace(/<\/td>/gi, " | ")
       .replace(/<\/th>/gi, " | ")
       .replace(/<\/p>/gi, "\n")
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/div>/gi, "\n")
-      // Strip remaining tags
       .replace(/<[^>]+>/g, " ")
-      // Collapse whitespace but preserve newlines
       .replace(/[ \t]+/g, " ")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
 
-    // For large documents, find and prioritize the financial statements section
-    const TOTAL_LIMIT = 600000;
-    if (stripped.length > TOTAL_LIMIT) {
-      const markers = [
-        /CONSOLIDATED BALANCE SHEET/i,
-        /BALANCE SHEETS/i,
-        /STATEMENTS? OF OPERATIONS/i,
-        /STATEMENTS? OF CASH FLOW/i,
-        /FINANCIAL STATEMENTS/i,
-        /ITEM\s*8[\.\s]/i,
-      ];
-
-      let financialStart = -1;
-      for (const marker of markers) {
-        const idx = stripped.search(marker);
-        if (idx !== -1 && (financialStart === -1 || idx < financialStart)) {
-          financialStart = idx;
-        }
-      }
-
-      if (financialStart > 0) {
-        // Preamble (business description etc.) + full financials section
-        const preamble = stripped.slice(0, Math.min(financialStart, 100000));
-        const financials = stripped.slice(financialStart, financialStart + 500000);
-        stripped = preamble + "\n\n" + financials;
-      } else {
-        stripped = stripped.slice(0, TOTAL_LIMIT);
-      }
+    // Limit narrative text — take preamble + MD&A section (skip deep financial tables since XBRL covers those)
+    const NARRATIVE_LIMIT = xbrlSummary ? 300000 : 600000;
+    if (stripped.length > NARRATIVE_LIMIT) {
+      stripped = stripped.slice(0, NARRATIVE_LIMIT);
     }
 
-    // Upload as plain text so the LLM gets clean readable content (not raw HTML)
-    const file = new File([stripped], "filing.txt", { type: "text/plain" });
+    // Combine: XBRL structured financials first (most important), then narrative HTML text
+    const combined = xbrlSummary + stripped;
+
+    const file = new File([combined], "filing.txt", { type: "text/plain" });
     const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
 
-    return Response.json({ file_url: uploaded.file_url, content_length: text.length, resolved_url: resolvedUrl });
+    return Response.json({ file_url: uploaded.file_url, content_length: text.length, resolved_url: resolvedUrl, has_xbrl: !!xbrlSummary });
   } catch (err) {
     return Response.json({ error: err.message || String(err) }, { status: 500 });
   }

@@ -245,8 +245,8 @@ export default function SECScanner() {
       });
 
       try {
-        // Fetch server-side to bypass CORS
-        const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: filing.url });
+        // Fetch server-side to bypass CORS; pass cik so XBRL companyfacts API can be used
+        const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: filing.url, cik: tickerData.cik, accession: filing.accession });
         if (!fetchRes.data?.file_url) {
           throw new Error(fetchRes.data?.error || "Failed to fetch filing from SEC EDGAR");
         }

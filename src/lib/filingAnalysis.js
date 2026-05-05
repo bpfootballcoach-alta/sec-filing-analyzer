@@ -413,15 +413,16 @@ ${source}
 
 FILING TYPE: ${filingType || "SEC filing"}
 
+IMPORTANT — STRUCTURED DATA SECTION: The document begins with a section marked "=== STRUCTURED FINANCIAL DATA (from SEC XBRL) ===" containing pre-extracted financial figures directly from SEC XBRL tags. These are AUTHORITATIVE values — use them directly to populate balance_sheet, cash_flow, profitability, and revenue fields. Do NOT ignore this section.
+
 CRITICAL RULES:
-1. Extract data ONLY from the document at the URL above — not from memory, not from web search results
-2. Do NOT invent, guess, or assume company names, merger details, or financial figures
-3. For COMPANY NAMES: Extract EXACTLY as written on the document's cover page and opening pages. Do NOT abbreviate or alter.
-4. For MERGER/TRANSACTION DETAILS: Quote exact language from Item 4 or the merger agreement summary. If details are unclear, say "unclear from document" rather than inferring
-5. Use EXACT figures from tables — include units (billions, millions, thousands, VND, USD, etc.) and cite the source section
-6. If figures appear in both local currency AND USD, capture both (e.g. "VND 39,411.7 billion (US$1,568.9 million)")
-7. For ALL financial tables: extract every row, every column, every period shown (current quarter, prior quarter, YoY)
-8. Leave fields BLANK (do not guess) if the information does not exist in this document
+1. Extract data ONLY from the document — not from memory, not from web search results
+2. For financial figures: ALWAYS prefer values from the "STRUCTURED FINANCIAL DATA" section at the top when present — they are exact XBRL-tagged values
+3. Do NOT invent, guess, or assume company names, merger details, or financial figures
+4. For COMPANY NAMES: Extract EXACTLY as written on the document's cover page. Do NOT abbreviate or alter.
+5. Use EXACT figures — include units (billions, millions, etc.) and note the period
+6. For ALL financial tables: extract every row, every column, every period shown
+7. Leave fields BLANK (do not guess) if the information does not exist in this document
 
 ${instructions}
 
