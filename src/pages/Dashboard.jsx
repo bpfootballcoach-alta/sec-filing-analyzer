@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileText, BarChart3, Search } from "lucide-react";
+import { FileText, BarChart3, Search, FileSearch } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import FileUploader from "@/components/filing/FileUploader";
 import AnalysisCard from "@/components/filing/AnalysisCard";
 import RegStatementChecker from "@/components/filing/RegStatementChecker";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import {
   EXTRACTION_SCHEMA,
   buildExtractionPrompt,
@@ -136,6 +136,11 @@ export default function Dashboard() {
               <p className="text-xs text-muted-foreground">AI-powered financial analysis</p>
             </div>
           </div>
+          <Link to="/sec-scanner">
+            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground border border-border hover:border-accent/50 rounded-lg px-3 py-2 transition-all">
+              <FileSearch className="w-4 h-4" /> SEC Scanner
+            </button>
+          </Link>
         </div>
       </header>
 
