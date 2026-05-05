@@ -115,15 +115,65 @@ Deno.serve(async (req) => {
       return Response.json({ error: "Fetched content is empty or too short" }, { status: 502 });
     }
 
-    // Strip HTML tags, collapse whitespace, and truncate to 400k chars
-    // SEC filings with inline XBRL can be 4MB+ of raw HTML; the LLM only needs readable text.
-    const stripped = text
+    // Strip HTML/XBRL aggressively, preserving financial table content
+    // SEC filings with inline XBRL can be 4MB+ of raw HTML
+    let html = text;
+
+    // Remove the hidden XBRL data block at the top of iXBRL documents
+    // This block appears as <ix:header>...</ix:header> or a <div style="display:none"> before the visible content
+    html = html.replace(/<ix:header[\s\S]*?<\/ix:header>/gi, "");
+    html = html.replace(/<div[^>]+style="[^"]*display\s*:\s*none[^"]*"[\s\S]*?<\/div>/gi, "");
+
+    let stripped = html
+      // Remove scripts and styles
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      // Remove inline XBRL ix: tags but keep their text content
+      .replace(/<ix:[^>]*>/gi, "")
+      .replace(/<\/ix:[^>]*>/gi, "")
+      // Preserve table/paragraph structure with newlines
+      .replace(/<\/tr>/gi, "\n")
+      .replace(/<\/td>/gi, " | ")
+      .replace(/<\/th>/gi, " | ")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/div>/gi, "\n")
+      // Strip remaining tags
       .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 400000);
+      // Collapse whitespace but preserve newlines
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    // For large documents, find and prioritize the financial statements section
+    const TOTAL_LIMIT = 600000;
+    if (stripped.length > TOTAL_LIMIT) {
+      const markers = [
+        /CONSOLIDATED BALANCE SHEET/i,
+        /BALANCE SHEETS/i,
+        /STATEMENTS? OF OPERATIONS/i,
+        /STATEMENTS? OF CASH FLOW/i,
+        /FINANCIAL STATEMENTS/i,
+        /ITEM\s*8[\.\s]/i,
+      ];
+
+      let financialStart = -1;
+      for (const marker of markers) {
+        const idx = stripped.search(marker);
+        if (idx !== -1 && (financialStart === -1 || idx < financialStart)) {
+          financialStart = idx;
+        }
+      }
+
+      if (financialStart > 0) {
+        // Preamble (business description etc.) + full financials section
+        const preamble = stripped.slice(0, Math.min(financialStart, 100000));
+        const financials = stripped.slice(financialStart, financialStart + 500000);
+        stripped = preamble + "\n\n" + financials;
+      } else {
+        stripped = stripped.slice(0, TOTAL_LIMIT);
+      }
+    }
 
     // Upload as plain text so the LLM gets clean readable content (not raw HTML)
     const file = new File([stripped], "filing.txt", { type: "text/plain" });
