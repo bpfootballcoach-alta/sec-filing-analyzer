@@ -21,27 +21,81 @@ function resolveEdgarUrl(url) {
   }
 }
 
+const SEC_HEADERS = {
+  "User-Agent": "Research Tool legal-research@example.com",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Connection": "keep-alive",
+};
+
+async function lookupTickerFilings(ticker) {
+  // Resolve ticker -> CIK
+  const tickerMapRes = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: SEC_HEADERS });
+  if (!tickerMapRes.ok) throw new Error("Failed to reach SEC EDGAR ticker list");
+  const tickerMap = await tickerMapRes.json();
+
+  let cik = null, companyName = null;
+  for (const entry of Object.values(tickerMap)) {
+    if (entry.ticker?.toUpperCase() === ticker.toUpperCase()) {
+      cik = String(entry.cik_str).padStart(10, "0");
+      companyName = entry.title;
+      break;
+    }
+  }
+  if (!cik) throw new Error(`Ticker "${ticker}" not found on SEC EDGAR`);
+
+  // Fetch recent filings
+  const filingsRes = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: SEC_HEADERS });
+  if (!filingsRes.ok) throw new Error("Failed to fetch filings from EDGAR");
+  const filingsData = await filingsRes.json();
+  const recent = filingsData.filings?.recent;
+  if (!recent?.form?.length) throw new Error(`No recent filings found for ${ticker}`);
+
+  const PRIORITY_FORMS = ["10-K", "10-Q", "8-K", "S-1", "S-3", "20-F", "DEF14A", "S-11", "F-1"];
+  const filings = [];
+  const cikInt = parseInt(cik, 10);
+  for (let i = 0; i < recent.form.length && filings.length < 20; i++) {
+    const form = recent.form[i];
+    if (PRIORITY_FORMS.some(f => form.startsWith(f))) {
+      const accession = recent.accessionNumber[i].replace(/-/g, "");
+      const primaryDoc = recent.primaryDocument[i];
+      filings.push({
+        form,
+        date: recent.filingDate[i],
+        period: recent.reportDate?.[i] || "",
+        accession,
+        primaryDocument: primaryDoc,
+        url: `https://www.sec.gov/Archives/edgar/data/${cikInt}/${accession}/${primaryDoc}`,
+      });
+    }
+  }
+  if (!filings.length) throw new Error(`No relevant filings found for ${ticker}`);
+
+  return { ticker: ticker.toUpperCase(), companyName: filingsData.name || companyName, cik, filings };
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { url } = await req.json();
-    if (!url) return Response.json({ error: "url is required" }, { status: 400 });
+    const body = await req.json();
+
+    // Mode: ticker lookup
+    if (body.ticker && !body.url) {
+      const result = await lookupTickerFilings(body.ticker);
+      return Response.json(result);
+    }
+
+    const { url } = body;
+    if (!url) return Response.json({ error: "url or ticker is required" }, { status: 400 });
 
     // Resolve the actual document URL (handles SEC EDGAR /ix?doc= viewer URLs)
     const resolvedUrl = resolveEdgarUrl(url);
 
     // Fetch the filing from SEC EDGAR with retries (SEC can 503 on first hit)
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-    const SEC_HEADERS = {
-      "User-Agent": "Research Tool legal-research@example.com",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-      "Accept-Encoding": "gzip, deflate, br",
-      "Connection": "keep-alive",
-    };
 
     let res;
     for (let attempt = 0; attempt < 3; attempt++) {

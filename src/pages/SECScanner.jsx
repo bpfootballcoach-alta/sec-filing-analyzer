@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -57,112 +58,14 @@ function TickerStep({ onNext }) {
     setLoading(true);
     setError("");
     try {
-      // Fetch filings list from EDGAR via SEC EDGAR full-text search API
-      const url = `https://efts.sec.gov/LATEST/search-index?q=%22${encodeURIComponent(t)}%22&dateRange=custom&startdt=2020-01-01&forms=10-K,10-Q,8-K,S-1,S-3,20-F,DEF14A&hits.hits._source=period_of_report,file_date,form_type,display_names,file_num`;
-      // Use EDGAR company search to get CIK
-      const entityRes = await fetch(
-        `https://efts.sec.gov/LATEST/search-index?q=%22${t}%22&forms=10-K,10-Q,8-K,S-1,S-3&hits.hits.total.value=1`,
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      // Fetch recent filings for this ticker
-      const edgarRes = await fetch(
-        `https://efts.sec.gov/LATEST/search-index?q=%22${t}%22&forms=10-K,10-Q,8-K,S-1,S-3,20-F,DEF14A&dateRange=custom&startdt=2022-01-01&hits.hits._source=period_of_report,file_date,form_type,display_names,entity_name,file_num,accession_no`,
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      // Also try the EDGAR full-text search
-      const searchRes = await fetch(
-        `https://efts.sec.gov/LATEST/search-index?q=%22${t}%22&dateRange=custom&startdt=2022-01-01&forms=10-K,10-Q,8-K,S-1,S-3,20-F`,
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      // Use EDGAR company search API
-      const companyRes = await fetch(
-        `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${encodeURIComponent(t)}&type=&dateb=&owner=include&count=40&search_text=&output=atom`,
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      // Best approach: use the EDGAR full text search API
-      const ftsRes = await fetch(
-        `https://efts.sec.gov/LATEST/search-index?q=%22${encodeURIComponent(t)}%22&forms=10-K,10-Q,8-K,S-1,S-3,20-F,DEF14A&dateRange=custom&startdt=2022-01-01&_source=period_of_report,file_date,form_type,display_names,entity_name,file_num,accession_no`,
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      // Use the EDGAR ticker→CIK lookup
-      const tickerMapRes = await fetch(
-        "https://www.sec.gov/files/company_tickers.json",
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      if (!tickerMapRes.ok) throw new Error("Failed to reach SEC EDGAR");
-
-      const tickerMap = await tickerMapRes.json();
-
-      // Find CIK for the given ticker
-      let cik = null;
-      let companyName = null;
-      for (const entry of Object.values(tickerMap)) {
-        if (entry.ticker?.toUpperCase() === t) {
-          cik = String(entry.cik_str).padStart(10, "0");
-          companyName = entry.title;
-          break;
-        }
-      }
-
-      if (!cik) {
-        setError(`Ticker "${t}" not found on SEC EDGAR. Try the full company name.`);
-        setLoading(false);
+      const res = await base44.functions.invoke("fetchAndAnalyzeFiling", { ticker: t });
+      if (res.data?.error) {
+        setError(res.data.error);
         return;
       }
-
-      // Fetch recent filings
-      const filingsRes = await fetch(
-        `https://data.sec.gov/submissions/CIK${cik}.json`,
-        { headers: { "User-Agent": "Research Tool research@example.com" } }
-      );
-
-      if (!filingsRes.ok) throw new Error("Failed to fetch filings from EDGAR");
-
-      const filingsData = await filingsRes.json();
-      const recent = filingsData.filings?.recent;
-
-      if (!recent?.form?.length) {
-        setError(`No recent filings found for ${t}.`);
-        setLoading(false);
-        return;
-      }
-
-      const PRIORITY_FORMS = ["10-K", "10-Q", "8-K", "S-1", "S-3", "20-F", "DEF14A", "S-11", "F-1"];
-      const filings = [];
-      for (let i = 0; i < recent.form.length && filings.length < 20; i++) {
-        const form = recent.form[i];
-        if (PRIORITY_FORMS.some(f => form.startsWith(f))) {
-          const accession = recent.accessionNumber[i].replace(/-/g, "");
-          const primaryDoc = recent.primaryDocument[i];
-          const fileDate = recent.filingDate[i];
-          const period = recent.reportDate?.[i] || "";
-          filings.push({
-            form,
-            date: fileDate,
-            period,
-            accession,
-            primaryDocument: primaryDoc,
-            url: `https://www.sec.gov/Archives/edgar/data/${parseInt(cik, 10)}/${accession}/${primaryDoc}`,
-            indexUrl: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=${encodeURIComponent(form)}&dateb=&owner=include&count=5`,
-          });
-        }
-      }
-
-      if (!filings.length) {
-        setError(`No relevant filings found for ${t}. They may not have filed 10-K/10-Q/8-K recently.`);
-        setLoading(false);
-        return;
-      }
-
-      onNext({ ticker: t, companyName: filingsData.name || companyName, cik, filings });
+      onNext(res.data);
     } catch (err) {
-      setError(err.message || "Failed to fetch filings from EDGAR");
+      setError(err?.response?.data?.error || err?.message || "Failed to fetch filings from EDGAR");
     } finally {
       setLoading(false);
     }
