@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.27';
 
 // Resolve the real document URL from SEC EDGAR inline viewer URLs
 // e.g. https://www.sec.gov/ix?doc=/Archives/edgar/data/.../file.htm
@@ -77,8 +77,6 @@ async function lookupTickerFilings(ticker) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
 
