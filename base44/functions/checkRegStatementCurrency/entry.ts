@@ -1,7 +1,23 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.27';
 
-const HEADERS = { "User-Agent": "SEC-Filing-Analyzer contact@example.com" };
+const HEADERS = {
+  "User-Agent": "SEC-Filing-Analyzer legal-research@example.com",
+  "Accept": "application/json, text/html, */*",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Connection": "keep-alive",
+};
 const EDGAR_BASE = "https://data.sec.gov/submissions";
+
+// Rate limiter: max 8 requests/sec to stay well under EDGAR's 10/sec limit
+let _lastFetchTime = 0;
+const secFetch = async (url, opts = {}) => {
+  const now = Date.now();
+  const minGap = 125; // ~8 req/sec
+  const wait = minGap - (now - _lastFetchTime);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  _lastFetchTime = Date.now();
+  return fetch(url, { ...opts, headers: { ...HEADERS, ...(opts.headers || {}) } });
+};
 
 const daysSince = (dateStr) => {
   if (!dateStr) return null;
@@ -34,10 +50,9 @@ Deno.serve(async (req) => {
     const tickerUpper = ticker.toUpperCase();
 
     // ── Resolve ticker → CIK ─────────────────────────────────────────────────
-    const [tickerRes, tickerExRes] = await Promise.all([
-      fetch("https://www.sec.gov/files/company_tickers.json", { headers: HEADERS }),
-      fetch("https://www.sec.gov/files/company_tickers_exchange.json", { headers: HEADERS }),
-    ]);
+    // Fetch ticker maps sequentially to respect rate limit
+    const tickerRes = await secFetch("https://www.sec.gov/files/company_tickers.json");
+    const tickerExRes = await secFetch("https://www.sec.gov/files/company_tickers_exchange.json");
     const tickerData = await tickerRes.json();
     const tickerExData = tickerExRes.ok ? await tickerExRes.json() : null;
 
@@ -75,7 +90,7 @@ Deno.serve(async (req) => {
       return acc;
     };
 
-    const subRes = await fetch(`${EDGAR_BASE}/CIK${cik}.json`, { headers: HEADERS });
+    const subRes = await secFetch(`${EDGAR_BASE}/CIK${cik}.json`);
     if (!subRes.ok) return Response.json({ error: "Failed to fetch EDGAR submissions" }, { status: 500 });
     const subData = await subRes.json();
     if (subData.name) companyName = subData.name;
@@ -84,10 +99,9 @@ Deno.serve(async (req) => {
     mergeFilingPage(filings, subData.filings?.recent || {});
     const additionalFiles = subData.filings?.files || [];
     if (additionalFiles.length > 0) {
-      const pageResponses = await Promise.all(
-        additionalFiles.map(f => fetch(`https://data.sec.gov/submissions/${f.name}`, { headers: HEADERS }))
-      );
-      for (const pageRes of pageResponses) {
+      // Fetch additional pages sequentially to respect rate limit
+      for (const f of additionalFiles) {
+        const pageRes = await secFetch(`https://data.sec.gov/submissions/${f.name}`);
         if (pageRes.ok) mergeFilingPage(filings, await pageRes.json());
       }
     }
@@ -298,7 +312,7 @@ ${regFilings.map((f, i) => `${i}. Form: ${f.form}, Date: ${f.date}, Description:
     if (selectedReg?.doc) {
       try {
         const regDocUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${selectedReg.doc}`;
-        const regDocRes = await fetch(regDocUrl, { headers: HEADERS });
+        const regDocRes = await secFetch(regDocUrl);
         if (regDocRes.ok) {
           const regDocText = await regDocRes.text();
 
@@ -449,7 +463,7 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}\n\nCOVER PAGE:\n${offeringS
             let feeTableText = "";
             try {
               const idxUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${resolvedAccession}-index.htm`;
-              const idxRes = await fetch(idxUrl, { headers: HEADERS }).catch(() => null);
+              const idxRes = await secFetch(idxUrl).catch(() => null);
               if (idxRes?.ok) {
                 const idxHtml = await idxRes.text();
                 // Look for EX-FILING FEES or EX-107 exhibit link
@@ -462,7 +476,7 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}\n\nCOVER PAGE:\n${offeringS
                 const feeExhibitPath = feeRowMatch?.[1] || feeMatch?.[1] || null;
                 if (feeExhibitPath) {
                   const feeUrl = feeExhibitPath.startsWith("http") ? feeExhibitPath : `https://www.sec.gov${feeExhibitPath}`;
-                  const feeRes = await fetch(feeUrl, { headers: HEADERS }).catch(() => null);
+                  const feeRes = await secFetch(feeUrl).catch(() => null);
                   if (feeRes?.ok) {
                     const feeHtml = await feeRes.text();
                     feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
@@ -597,7 +611,7 @@ IMPORTANT: If the fee table lists securities not in the narrative, still include
     if (regFileNumber) {
       try {
         const url = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum=${encodeURIComponent(regFileNumber)}&type=&dateb=&owner=include&count=100&search_text=&output=atom`;
-        const res = await fetch(url, { headers: HEADERS });
+        const res = await secFetch(url);
         if (res.ok) {
           allFileNumEntries = parseFileNumFeed(await res.text());
         }
@@ -670,7 +684,7 @@ IMPORTANT: If the fee table lists securities not in the narrative, still include
         let updateUrl;
         if (updateFiling.indexUrl) {
           // Fetch the index page to find the primary document filename
-          const idxRes = await fetch(updateFiling.indexUrl, { headers: HEADERS }).catch(() => null);
+          const idxRes = await secFetch(updateFiling.indexUrl).catch(() => null);
           if (idxRes?.ok) {
             const idxHtml = await idxRes.text();
             // Extract the first .htm document from the index table (primary document)
@@ -681,7 +695,7 @@ IMPORTANT: If the fee table lists securities not in the narrative, still include
           updateUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${updateFiling.accession.replace(/-/g, "")}/${updateFiling.doc}`;
         }
         if (!updateUrl) continue;
-        const updateRes = await fetch(updateUrl, { headers: HEADERS });
+        const updateRes = await secFetch(updateUrl);
         if (updateRes.ok) {
           const updateText = await updateRes.text();
           const extracted = await base44.asServiceRole.integrations.Core.InvokeLLM({

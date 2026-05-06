@@ -22,15 +22,26 @@ function resolveEdgarUrl(url) {
 }
 
 const SEC_HEADERS = {
-  "User-Agent": "Research Tool legal-research@example.com",
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "User-Agent": "SEC-Filing-Analyzer legal-research@example.com",
+  "Accept": "text/html,application/xhtml+xml,application/json,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
   "Connection": "keep-alive",
+};
+
+// Rate limiter: max 8 req/sec to stay under EDGAR's 10/sec limit
+let _lastFetchTime = 0;
+const secFetch = async (url, opts = {}) => {
+  const now = Date.now();
+  const wait = 125 - (now - _lastFetchTime);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  _lastFetchTime = Date.now();
+  return fetch(url, { ...opts, headers: { ...SEC_HEADERS, ...(opts.headers || {}) } });
 };
 
 async function lookupTickerFilings(ticker) {
   // Resolve ticker -> CIK
-  const tickerMapRes = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: SEC_HEADERS });
+  const tickerMapRes = await secFetch("https://www.sec.gov/files/company_tickers.json");
   if (!tickerMapRes.ok) throw new Error("Failed to reach SEC EDGAR ticker list");
   const tickerMap = await tickerMapRes.json();
 
@@ -45,7 +56,7 @@ async function lookupTickerFilings(ticker) {
   if (!cik) throw new Error(`Ticker "${ticker}" not found on SEC EDGAR`);
 
   // Fetch recent filings
-  const filingsRes = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: SEC_HEADERS });
+  const filingsRes = await secFetch(`https://data.sec.gov/submissions/CIK${cik}.json`);
   if (!filingsRes.ok) throw new Error("Failed to fetch filings from EDGAR");
   const filingsData = await filingsRes.json();
   const recent = filingsData.filings?.recent;
@@ -108,7 +119,7 @@ Deno.serve(async (req) => {
     let xbrlSummary = "";
     if (cik) {
       try {
-        const factsRes = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, "0")}.json`, { headers: SEC_HEADERS });
+        const factsRes = await secFetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, "0")}.json`);
         if (factsRes.ok) {
           const facts = await factsRes.json();
           const usgaap = facts.facts?.["us-gaap"] || {};
@@ -190,7 +201,7 @@ Deno.serve(async (req) => {
     let res;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await sleep(2000 * attempt);
-      res = await fetch(resolvedUrl, { headers: SEC_HEADERS });
+      res = await secFetch(resolvedUrl);
       if (res.ok) break;
       if (res.status !== 503 && res.status !== 429) break;
     }

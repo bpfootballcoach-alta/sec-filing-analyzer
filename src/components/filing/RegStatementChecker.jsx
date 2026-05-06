@@ -81,7 +81,6 @@ export default function RegStatementChecker() {
     const t = ticker.trim().toUpperCase();
     if (!t) return;
 
-    // Validate it looks like a ticker (1–6 uppercase letters/numbers, optional dot)
     if (t.length > 10 || t.includes("/") || t.includes("\\") || t.startsWith("HTTP")) {
       setError("Please enter a ticker symbol (e.g. AAPL, MSFT) — not a URL.");
       return;
@@ -92,14 +91,19 @@ export default function RegStatementChecker() {
     setRegList(null);
     setDetailResult(null);
     setSelectedReg(null);
-    const res = await base44.functions.invoke("checkRegStatementCurrency", { ticker: t });
-    setLoading(false);
-    if (res.data?.error) { setError(res.data.error); return; }
-    if (res.data?.registrationStatements?.length === 0) {
-      setError(`No registration statements found for ${t} on EDGAR.`);
-      return;
+    try {
+      const res = await base44.functions.invoke("checkRegStatementCurrency", { ticker: t });
+      if (res.data?.error) { setError(res.data.error); return; }
+      if (res.data?.registrationStatements?.length === 0) {
+        setError(`No registration statements found for ${t} on EDGAR.`);
+        return;
+      }
+      setRegList(res.data);
+    } catch (err) {
+      setError(err?.response?.data?.error || err?.message || "Failed to reach EDGAR. Please try again.");
+    } finally {
+      setLoading(false);
     }
-    setRegList(res.data);
   };
 
   const handleSelectReg = async (reg) => {
@@ -107,13 +111,18 @@ export default function RegStatementChecker() {
     setLoading(true);
     setError("");
     setDetailResult(null);
-    const res = await base44.functions.invoke("checkRegStatementCurrency", {
-      ticker: regList.ticker,
-      accession: reg.accession,
-    });
-    setLoading(false);
-    if (res.data?.error) { setError(res.data.error); return; }
-    setDetailResult(res.data);
+    try {
+      const res = await base44.functions.invoke("checkRegStatementCurrency", {
+        ticker: regList.ticker,
+        accession: reg.accession,
+      });
+      if (res.data?.error) { setError(res.data.error); return; }
+      setDetailResult(res.data);
+    } catch (err) {
+      setError(err?.response?.data?.error || err?.message || "Failed to analyze registration statement. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleReset = () => {
