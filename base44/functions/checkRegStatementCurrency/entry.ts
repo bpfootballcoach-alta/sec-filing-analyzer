@@ -496,21 +496,29 @@ ${feeTableText ? feeTableText : "(not available — use cover page only)"}
 SOURCE 2 — COVER PAGE / NARRATIVE TEXT:
 ${coverText}
 
-The filing fee table ("Calculation of Filing Fee Tables" or "Table of Registration Fees") lists EVERY security class with exact amounts. Use it as the primary source. The cover page narrative provides context.
+CRITICAL INSTRUCTIONS FOR READING THE FILING FEE TABLE:
+- The fee table has ROWS, one per security class. Each row has its OWN amount, price, and aggregate value.
+- Read each row completely and independently. Do NOT mix amounts or prices between rows.
+- The security class name in each row tells you exactly what security it applies to.
+- Common row types: "Common Stock", "Rights", "Warrants to Purchase Common Stock", "Units", "Shares underlying warrants", etc.
+- A "Rights" row and a "Warrants" row are DIFFERENT securities — do not swap their amounts.
+- amount_registered: the number of shares/units on THAT row only
+- price_per_unit: the price per unit on THAT row only
+- aggregate_offering_price: the aggregate value on THAT row only
 
 For EACH security class listed, extract:
-- security_class: e.g. "Class A Common Stock", "Warrants to Purchase Common Stock", "Units"
-- offering_type: "Primary" (company selling new shares), "Resale" (selling shareholders), or "Underlying" (shares issuable on exercise of warrants/options)
-- amount_registered: number of shares/units if stated
-- price_per_unit: offering price per unit if stated (may be null)
-- aggregate_offering_price: total offering amount if stated (may be null)
+- security_class: e.g. "Class A Common Stock", "Warrants to Purchase Common Stock", "Rights", "Units"
+- offering_type: "Primary" (company selling new shares), "Resale" (selling shareholders), or "Underlying" (shares issuable on exercise of warrants/options/rights)
+- amount_registered: number of shares/units for this specific row
+- price_per_unit: offering price per unit for this specific row (may be null)
+- aggregate_offering_price: total offering amount for this specific row (may be null)
 
 Also provide:
-- label: 5-10 word plain-English summary (e.g. "Common stock and warrants — resale by selling shareholders")
+- label: 5-10 word plain-English summary (e.g. "Common stock, rights and warrants — resale by selling shareholders")
 - summary: 1-2 sentence description of the offering
 - offering_types: comma-separated list: Primary, Resale, Underlying (only those present)
 
-IMPORTANT: If the fee table lists securities not in the narrative, still include them. Fee table is authoritative.`,
+IMPORTANT: If the fee table lists securities not in the narrative, still include them. Fee table is authoritative. Preserve the exact row order from the fee table.`,
               response_json_schema: {
                 type: "object",
                 properties: {
