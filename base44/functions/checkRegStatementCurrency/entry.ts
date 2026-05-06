@@ -473,7 +473,7 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}\n\nCOVER PAGE:\n${offeringS
                 const feeRes = await secFetch(feeUrl).catch(() => null);
                 if (feeRes?.ok) {
                   const feeHtml = await feeRes.text();
-                  feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+                  feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 16000);
                 }
               }
             }
@@ -491,29 +491,35 @@ ${feeTableText ? feeTableText : "(not available — use cover page only)"}
 SOURCE 2 — COVER PAGE / NARRATIVE TEXT:
 ${coverText}
 
-CRITICAL INSTRUCTIONS FOR READING THE FILING FEE TABLE:
+CRITICAL INSTRUCTIONS FOR READING THE FILING FEE TABLE AND FOOTNOTES:
+
+STEP 1 — READ THE TABLE ROWS:
 - The fee table has ROWS, one per security class. Each row has its OWN amount, price, and aggregate value.
 - Read each row completely and independently. Do NOT mix amounts or prices between rows.
 - The security class name in each row tells you exactly what security it applies to.
-- Common row types: "Common Stock", "Rights", "Warrants to Purchase Common Stock", "Units", "Shares underlying warrants", etc.
+- Common row types: "Common Stock", "Ordinary Shares", "Rights", "Warrants to Purchase Common Stock/Ordinary Shares", "Units", "Shares underlying warrants", etc.
 - A "Rights" row and a "Warrants" row are DIFFERENT securities — do not swap their amounts.
-- amount_registered: the number of shares/units on THAT row only
-- price_per_unit: the price per unit on THAT row only
-- aggregate_offering_price: the aggregate value on THAT row only
 
-For EACH security class listed, extract:
-- security_class: e.g. "Class A Common Stock", "Warrants to Purchase Common Stock", "Rights", "Units"
+STEP 2 — READ THE FOOTNOTES (critical for rights and warrants):
+- Filing fee tables frequently have footnotes (marked (1), (2), (3), *, ** etc.) below the main table.
+- These footnotes often explain HOW the amounts were calculated — e.g. "Represents shares issuable upon exercise of 5,750,000 warrants" or "Calculated pursuant to Rule 457(f)" or "Includes 1,000,000 shares underlying rights, each right entitling the holder to receive 1/10 of one share".
+- For rows where the table shows "N/A" or "$0" for amount or price, the FOOTNOTE is the source of the actual number — read it carefully.
+- Extract the specific share/unit counts and prices from the footnotes and map them to the correct security row.
+
+STEP 3 — SYNTHESIZE TABLE + FOOTNOTES + COVER PAGE:
+For EACH security class, combine the table row data with its footnote explanation to produce:
+- security_class: exact name as stated (e.g. "Ordinary Shares", "Warrants to Purchase Ordinary Shares", "Rights to Receive Ordinary Shares")
 - offering_type: "Primary" (company selling new shares), "Resale" (selling shareholders), or "Underlying" (shares issuable on exercise of warrants/options/rights)
-- amount_registered: number of shares/units for this specific row
-- price_per_unit: offering price per unit for this specific row (may be null)
-- aggregate_offering_price: total offering amount for this specific row (may be null)
+- amount_registered: number of shares/units — use footnote if table says N/A
+- price_per_unit: price per unit — use footnote if table says N/A
+- aggregate_offering_price: total offering amount — use footnote if table says N/A
 
 Also provide:
-- label: 5-10 word plain-English summary (e.g. "Common stock, rights and warrants — resale by selling shareholders")
-- summary: 1-2 sentence description of the offering
+- label: 5-10 word plain-English summary (e.g. "Ordinary shares, rights and warrants — business combination")
+- summary: 2-3 sentence description of the offering including what each security class represents
 - offering_types: comma-separated list: Primary, Resale, Underlying (only those present)
 
-IMPORTANT: If the fee table lists securities not in the narrative, still include them. Fee table is authoritative. Preserve the exact row order from the fee table.`,
+IMPORTANT: Footnotes are often MORE INFORMATIVE than the table rows. Always read ALL footnotes and map them to the correct security. Preserve the exact row order from the fee table.`,
               response_json_schema: {
                 type: "object",
                 properties: {
