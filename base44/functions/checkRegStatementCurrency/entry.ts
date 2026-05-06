@@ -454,37 +454,32 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}\n\nCOVER PAGE:\n${offeringS
           };
 
           // ── Extract securities being registered: cover page + EX-FILING FEES exhibit ──
-          // The filing fee table is often in a SEPARATE exhibit (EX-FILING FEES / ex107.htm),
-          // NOT embedded in the main document. Fetch it explicitly from the filing index.
+          // Run in its own independent try/catch so IBR errors don't suppress this.
+          const coverText = plainText.slice(0, 20000);
+          let feeTableText = "";
           try {
-            const coverText = plainText.slice(0, 20000);
-
-            // Fetch the filing index to find the EX-FILING FEES exhibit URL
-            let feeTableText = "";
-            try {
-              const idxUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${resolvedAccession}-index.htm`;
-              const idxRes = await secFetch(idxUrl).catch(() => null);
-              if (idxRes?.ok) {
-                const idxHtml = await idxRes.text();
-                // Look for EX-FILING FEES or EX-107 exhibit link
-                const feeMatch = idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex10[^"]*?\.htm)"/i)
-                  || idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex107[^"]*?\.htm)"/i)
-                  || idxHtml.match(/EX-FILING FEES[\s\S]{0,300}href="(\/Archives\/edgar\/data\/[^"]+?\.htm)"/i);
-                // More robust: scan all rows for "FILING FEES" type
-                const feeRowMatch = idxHtml.match(/EX-FILING FEES[^<]*<\/td>[^<]*<[^>]*>[^<]*<[^>]*>\s*<a[^>]+href="([^"]+)"/i)
-                  || idxHtml.match(/href="(\/Archives[^"]+ex107[^"]*\.htm)"/i);
-                const feeExhibitPath = feeRowMatch?.[1] || feeMatch?.[1] || null;
-                if (feeExhibitPath) {
-                  const feeUrl = feeExhibitPath.startsWith("http") ? feeExhibitPath : `https://www.sec.gov${feeExhibitPath}`;
-                  const feeRes = await secFetch(feeUrl).catch(() => null);
-                  if (feeRes?.ok) {
-                    const feeHtml = await feeRes.text();
-                    feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
-                  }
+            const idxUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${resolvedAccession}-index.htm`;
+            const idxRes = await secFetch(idxUrl).catch(() => null);
+            if (idxRes?.ok) {
+              const idxHtml = await idxRes.text();
+              const feeMatch = idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex10[^"]*?\.htm)"/i)
+                || idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex107[^"]*?\.htm)"/i)
+                || idxHtml.match(/EX-FILING FEES[\s\S]{0,300}href="(\/Archives\/edgar\/data\/[^"]+?\.htm)"/i);
+              const feeRowMatch = idxHtml.match(/EX-FILING FEES[^<]*<\/td>[^<]*<[^>]*>[^<]*<[^>]*>\s*<a[^>]+href="([^"]+)"/i)
+                || idxHtml.match(/href="(\/Archives[^"]+ex107[^"]*\.htm)"/i);
+              const feeExhibitPath = feeRowMatch?.[1] || feeMatch?.[1] || null;
+              if (feeExhibitPath) {
+                const feeUrl = feeExhibitPath.startsWith("http") ? feeExhibitPath : `https://www.sec.gov${feeExhibitPath}`;
+                const feeRes = await secFetch(feeUrl).catch(() => null);
+                if (feeRes?.ok) {
+                  const feeHtml = await feeRes.text();
+                  feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
                 }
               }
-            } catch (_) { /* non-critical */ }
+            }
+          } catch (_) { /* non-critical */ }
 
+          try {
             securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({
               prompt: `Read this SEC registration statement and extract what securities are being registered.
 
@@ -532,7 +527,7 @@ IMPORTANT: If the fee table lists securities not in the narrative, still include
                 }
               }
             });
-          } catch (_) { /* non-critical */ }
+          } catch (_) { /* non-critical — securities table stays null */ }
 
           // Update prospectus dates from actual FS in the reg document
           if (ibr?.most_recent_interim_date && /^\d{4}-\d{2}-\d{2}$/.test(ibr.most_recent_interim_date)) {
