@@ -455,29 +455,41 @@ Extracted text:\n${contextToAnalyze.slice(0, 14000)}\n\nCOVER PAGE:\n${offeringS
 
           // ── Extract securities being registered: cover page + EX-FILING FEES exhibit ──
           // Run in its own independent try/catch so IBR errors don't suppress this.
-          const coverText = plainText.slice(0, 20000);
+          // Use a wider window: cover page (first 15k) + the section around "CALCULATION OF FILING FEE"
+          // which can appear anywhere in the first 80k of the document.
+          const coverText = plainText.slice(0, 15000);
+
+          // Also extract the filing fee table section from within the main document text.
+          // The fee table header keywords: "CALCULATION OF FILING FEE", "TABLE OF REGISTRATION FEES"
           let feeTableText = "";
+          const feeKeywordIdx = plainText.search(/CALCULATION OF (REGISTRATION|FILING) FEE|TABLE OF REGISTRATION FEES/i);
+          if (feeKeywordIdx !== -1) {
+            // Take 8000 chars starting from the keyword so we get the table AND all footnotes below it
+            feeTableText = plainText.slice(feeKeywordIdx, feeKeywordIdx + 8000);
+          }
+
+          // Try to find a separate EX-FILING FEES exhibit — if found, it has more precise data
           try {
             const idxUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${resolvedAccession.replace(/-/g, "")}/${resolvedAccession}-index.htm`;
             const idxRes = await secFetch(idxUrl).catch(() => null);
             if (idxRes?.ok) {
               const idxHtml = await idxRes.text();
-              const feeMatch = idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex10[^"]*?\.htm)"/i)
-                || idxHtml.match(/href="(\/Archives\/edgar\/data\/[^"]+?ex107[^"]*?\.htm)"/i)
-                || idxHtml.match(/EX-FILING FEES[\s\S]{0,300}href="(\/Archives\/edgar\/data\/[^"]+?\.htm)"/i);
+              // Match any EX-FILING FEES exhibit link regardless of filename pattern
               const feeRowMatch = idxHtml.match(/EX-FILING FEES[^<]*<\/td>[^<]*<[^>]*>[^<]*<[^>]*>\s*<a[^>]+href="([^"]+)"/i)
-                || idxHtml.match(/href="(\/Archives[^"]+ex107[^"]*\.htm)"/i);
-              const feeExhibitPath = feeRowMatch?.[1] || feeMatch?.[1] || null;
+                || idxHtml.match(/href="(\/Archives[^"]+ex107[^"]*\.htm)"/i)
+                || idxHtml.match(/EX-FILING FEES[\s\S]{0,500}href="(\/Archives[^"]+\.htm)"/i);
+              const feeExhibitPath = feeRowMatch?.[1] || null;
               if (feeExhibitPath) {
                 const feeUrl = feeExhibitPath.startsWith("http") ? feeExhibitPath : `https://www.sec.gov${feeExhibitPath}`;
                 const feeRes = await secFetch(feeUrl).catch(() => null);
                 if (feeRes?.ok) {
                   const feeHtml = await feeRes.text();
+                  // Exhibit overrides the inline table (more structured)
                   feeTableText = feeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 16000);
                 }
               }
             }
-          } catch (_) { /* non-critical */ }
+          } catch (_) { /* non-critical — use inline fee table text */ }
 
           try {
             securitiesRegistered = await base44.asServiceRole.integrations.Core.InvokeLLM({

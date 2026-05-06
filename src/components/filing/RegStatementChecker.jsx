@@ -324,11 +324,11 @@ export default function RegStatementChecker() {
                       <tbody>
                         {detailResult.registration.securitiesRegistered.securities.map((s, i) => (
                           <tr key={i} className="border-b border-border/50 last:border-0">
-                            <td className="py-1.5 pr-3 text-foreground">{s.security_class}</td>
-                            <td className="py-1.5 pr-3 text-muted-foreground">{s.offering_type}</td>
-                            <td className="py-1.5 pr-3 text-right font-mono text-foreground">{s.amount_registered}</td>
-                            <td className="py-1.5 pr-3 text-right font-mono text-muted-foreground">{s.price_per_unit || "—"}</td>
-                            <td className="py-1.5 text-right font-mono text-foreground">{s.aggregate_offering_price}</td>
+                            <td className="py-1.5 pr-3 text-foreground">{s.security_class || "—"}</td>
+                            <td className="py-1.5 pr-3 text-muted-foreground">{s.offering_type || "—"}</td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-foreground">{s.amount_registered || <span className="text-muted-foreground">N/A</span>}</td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-muted-foreground">{s.price_per_unit || <span className="text-muted-foreground/60">N/A</span>}</td>
+                            <td className="py-1.5 text-right font-mono text-foreground">{s.aggregate_offering_price || <span className="text-muted-foreground">N/A</span>}</td>
                           </tr>
                         ))}
                       </tbody>
