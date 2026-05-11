@@ -1,7 +1,14 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { base44 } from '@/api/base44Client';
 
 const AuthContext = createContext();
+
+export class UserNotRegisteredError extends Error {
+  constructor() {
+    super('User not registered');
+    this.name = 'UserNotRegisteredError';
+  }
+}
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -13,52 +20,41 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     checkAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      (async () => {
-        if (session?.user) {
-          setUser(session.user);
-          setIsAuthenticated(true);
-          setAuthError(null);
-        } else {
-          setUser(null);
-          setIsAuthenticated(false);
-        }
-        setIsLoadingAuth(false);
-      })();
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
   const checkAuth = async () => {
     try {
       setIsLoadingAuth(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        setUser(session.user);
+      const authed = await base44.auth.isAuthenticated();
+      if (authed) {
+        const me = await base44.auth.me();
+        setUser(me);
         setIsAuthenticated(true);
+        setAuthError(null);
       } else {
         setUser(null);
         setIsAuthenticated(false);
+        setAuthError({ type: 'auth_required', message: 'Authentication required' });
       }
     } catch (error) {
-      console.error('Auth check failed:', error);
-      setAuthError({ type: 'unknown', message: error.message || 'An unexpected error occurred' });
+      if (error?.response?.status === 403 || error?.message?.includes('not registered')) {
+        setAuthError({ type: 'user_not_registered', message: error.message });
+      } else if (error?.response?.status === 401) {
+        setAuthError({ type: 'auth_required', message: 'Authentication required' });
+      } else {
+        setAuthError({ type: 'unknown', message: error.message || 'An unexpected error occurred' });
+      }
     } finally {
       setIsLoadingAuth(false);
     }
   };
 
   const navigateToLogin = () => {
-    // For Supabase, we show the login form inline
-    setAuthError({ type: 'auth_required', message: 'Please sign in to continue' });
+    base44.auth.redirectToLogin();
   };
 
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setIsAuthenticated(false);
+  const logout = () => {
+    base44.auth.logout();
   };
 
   return (

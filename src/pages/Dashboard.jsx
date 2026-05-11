@@ -1,9 +1,8 @@
 import React, { useState } from "react";
-import { FilingAnalysis, functions, llm, uploadFile, getGeminiApiKey, setGeminiApiKey } from "@/api/apiClient";
+import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileText, BarChart3, Search, FileSearch, Settings, Key, X } from "lucide-react";
+import { FileText, BarChart3, Search, FileSearch } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import FileUploader from "@/components/filing/FileUploader";
@@ -22,13 +21,13 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => FilingAnalysis.delete(id),
+    mutationFn: (id) => base44.entities.FilingAnalysis.delete(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] }),
   });
 
   const { data: analyses, isLoading } = useQuery({
     queryKey: ["filingAnalyses"],
-    queryFn: () => FilingAnalysis.list("-created_date", 50),
+    queryFn: () => base44.entities.FilingAnalysis.list("-created_date", 50),
     initialData: [],
   });
 
@@ -37,10 +36,9 @@ export default function Dashboard() {
       setIsProcessing(true);
 
       const isUrl = !!url;
-      let file_url, fileName, fileContent;
+      let file_url, fileName;
 
       if (isUrl) {
-        // Convert SEC iXBRL viewer URLs (ix?doc=...) to the direct document URL
         let resolvedUrl = url;
         const ixMatch = url.match(/[?&]doc=([^&]+)/);
         if (ixMatch) {
@@ -50,65 +48,45 @@ export default function Dashboard() {
         file_url = resolvedUrl;
         fileName = resolvedUrl.split("/").pop().split("?")[0] || resolvedUrl;
       } else {
-        // Read file content client-side for LLM analysis
+        const uploaded = await base44.integrations.Core.UploadFile({ file });
+        file_url = uploaded.file_url;
         fileName = file.name;
-        try {
-          fileContent = await file.text();
-        } catch (_) {
-          fileContent = null;
-        }
-        // Still upload for storage/reference
-        try {
-          const uploaded = await uploadFile({ file });
-          file_url = uploaded.file_url;
-        } catch (_) {
-          file_url = null;
-        }
       }
 
-      // Create record immediately so user can see it processing
-      const record = await FilingAnalysis.create({
+      const record = await base44.entities.FilingAnalysis.create({
         file_name: fileName,
-        file_url: file_url || "",
+        file_url: file_url,
         status: "processing",
       });
 
       try {
         let extractionResult;
         if (isUrl) {
-          // For SEC URLs: fetch server-side (bypasses CORS/bot blocking)
-          const fetchRes = await functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
-          if (!fetchRes.data?.content) {
+          const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
+          if (!fetchRes.data?.file_url) {
             throw new Error(fetchRes.data?.error || "Failed to fetch filing from URL");
           }
-          // Use the fetched content as context for LLM extraction
-          const contentSnippet = fetchRes.data.content.slice(0, 80000);
-          extractionResult = await llm.invoke({
-            prompt: buildExtractionPrompt(file_url, false, null) + `\n\nFILING CONTENT:\n${contentSnippet}`,
+          extractionResult = await base44.integrations.Core.InvokeLLM({
+            prompt: buildExtractionPrompt(fetchRes.data.file_url, false, null),
             response_json_schema: EXTRACTION_SCHEMA,
-            model: "gemini-2.0-flash",
+            model: "gemini_3_flash",
+            file_urls: [fetchRes.data.file_url],
           });
         } else {
-          // For uploaded files: pass file content to LLM
-          let prompt = buildExtractionPrompt(fileName, false, null);
-          if (fileContent) {
-            const snippet = fileContent.slice(0, 80000);
-            prompt += `\n\nFILING CONTENT:\n${snippet}`;
-          }
-          extractionResult = await llm.invoke({
-            prompt,
+          extractionResult = await base44.integrations.Core.InvokeLLM({
+            prompt: buildExtractionPrompt(file_url, false, null),
             response_json_schema: EXTRACTION_SCHEMA,
-            model: "gemini-2.0-flash",
+            model: "gemini_3_flash",
+            file_urls: [file_url],
           });
         }
 
-        await FilingAnalysis.update(record.id, {
+        await base44.entities.FilingAnalysis.update(record.id, {
           ...extractionResult,
           status: "completed",
         });
       } catch (err) {
-        // Mark as failed so the user can see it and delete it
-        await FilingAnalysis.update(record.id, { status: "failed" });
+        await base44.entities.FilingAnalysis.update(record.id, { status: "failed" });
         throw err;
       }
 
@@ -139,17 +117,6 @@ export default function Dashboard() {
     );
   });
 
-  const [showSettings, setShowSettings] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState(getGeminiApiKey());
-
-  const handleSaveApiKey = () => {
-    setGeminiApiKey(apiKeyInput.trim());
-    setShowSettings(false);
-    toast.success(apiKeyInput.trim() ? "API key saved" : "API key removed");
-  };
-
-  const hasApiKey = !!getGeminiApiKey();
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -164,78 +131,13 @@ export default function Dashboard() {
               <p className="text-xs text-muted-foreground">AI-powered financial analysis</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className={`flex items-center gap-2 text-sm border rounded-lg px-3 py-2 transition-all ${
-                hasApiKey
-                  ? 'text-muted-foreground hover:text-foreground border-border hover:border-accent/50'
-                  : 'text-amber-600 border-amber-300 bg-amber-50 hover:bg-amber-100'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              {hasApiKey ? 'Settings' : 'Set API Key'}
+          <Link to="/sec-scanner">
+            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground border border-border hover:border-accent/50 rounded-lg px-3 py-2 transition-all">
+              <FileSearch className="w-4 h-4" /> SEC Scanner
             </button>
-            <Link to="/sec-scanner">
-              <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground border border-border hover:border-accent/50 rounded-lg px-3 py-2 transition-all">
-                <FileSearch className="w-4 h-4" /> SEC Scanner
-              </button>
-            </Link>
-          </div>
+          </Link>
         </div>
       </header>
-
-      {/* API Key Settings Banner */}
-      {showSettings && (
-        <div className="bg-card border-b border-border">
-          <div className="max-w-6xl mx-auto px-6 py-4">
-            <div className="flex items-start gap-3">
-              <Key className="w-5 h-5 text-muted-foreground mt-0.5" />
-              <div className="flex-1 space-y-2">
-                <h3 className="text-sm font-semibold text-foreground">Gemini API Key</h3>
-                <p className="text-xs text-muted-foreground">
-                  Required for AI analysis features (filing extraction, chat, source lookup). Get a free key from{' '}
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                    Google AI Studio
-                  </a>.
-                  The key is stored locally in your browser only.
-                </p>
-                <div className="flex gap-2 max-w-lg">
-                  <Input
-                    type="password"
-                    placeholder="AIza..."
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    className="text-sm"
-                  />
-                  <Button size="sm" onClick={handleSaveApiKey} className="gap-1">
-                    Save
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setShowSettings(false)}>
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Missing API Key Warning */}
-      {!hasApiKey && (
-        <div className="bg-amber-50 border-b border-amber-200">
-          <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-2">
-            <Key className="w-4 h-4 text-amber-600" />
-            <p className="text-sm text-amber-800">
-              AI features require a Gemini API key.{' '}
-              <button onClick={() => setShowSettings(true)} className="font-semibold underline hover:no-underline">
-                Set your key
-              </button>{' '}
-              to enable filing analysis, chat, and source lookup.
-            </p>
-          </div>
-        </div>
-      )}
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-10">
         {/* Registration Statement Currency Checker */}
