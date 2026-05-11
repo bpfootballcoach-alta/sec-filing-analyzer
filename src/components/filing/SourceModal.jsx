@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { llm } from "@/api/apiClient";
 import { Button } from "@/components/ui/button";
 import { BookOpen, X, Loader2, ExternalLink, AlertCircle } from "lucide-react";
 
@@ -25,13 +25,13 @@ export default function SourceModal({ fileUrl, topic, label = "Source" }) {
     setError(null);
 
     try {
-      // Determine if fileUrl is an uploaded file (base44 CDN) or a remote SEC URL
-      const isUploadedFile = fileUrl && (fileUrl.includes("base44") || fileUrl.startsWith("blob:") || /\.(pdf|htm|html)$/i.test(fileUrl) === false);
+      // Determine if fileUrl is an uploaded file (Supabase storage) or a remote SEC URL
+      const isUploadedFile = fileUrl && (fileUrl.includes("supabase") || fileUrl.startsWith("blob:") || /\.(pdf|htm|html)$/i.test(fileUrl) === false);
       const llmParams = isUploadedFile
         ? { file_urls: [fileUrl] }
         : { add_context_from_internet: true };
 
-      const llmRes = await base44.integrations.Core.InvokeLLM({
+      const llmRes = await llm.invoke({
         prompt: `You are a financial document analyst. The user wants to find where "${topic}" is discussed in this SEC filing document at: ${fileUrl}
 
 Find ALL relevant passages that directly support the data shown for "${topic}". For each passage:
@@ -40,8 +40,7 @@ Find ALL relevant passages that directly support the data shown for "${topic}". 
 3. Estimate approximate location (e.g. "~15% through the document").
 
 Return up to 3 of the most relevant passages. If none found, say so clearly.`,
-        model: "gemini_3_flash",
-        ...llmParams,
+        model: "gemini-2.0-flash",
         response_json_schema: {
           type: "object",
           properties: {

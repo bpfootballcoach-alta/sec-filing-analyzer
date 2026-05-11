@@ -1,5 +1,5 @@
 import React from "react";
-import { base44 } from "@/api/base44Client";
+import { FilingAnalysis } from "@/api/apiClient";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -47,7 +47,7 @@ export default function AnalysisDetail() {
   const { data: analysis, isLoading } = useQuery({
     queryKey: ["filingAnalysis", analysisId],
     queryFn: async () => {
-      const items = await base44.entities.FilingAnalysis.filter({ id: analysisId });
+      const items = await FilingAnalysis.filter({ id: analysisId });
       return items[0];
     },
     enabled: !!analysisId,
@@ -57,7 +57,7 @@ export default function AnalysisDetail() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => base44.entities.FilingAnalysis.delete(analysisId),
+    mutationFn: () => FilingAnalysis.delete(analysisId),
     onSuccess: () => navigate("/"),
   });
 

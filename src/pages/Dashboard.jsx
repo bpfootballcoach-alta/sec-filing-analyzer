@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { FilingAnalysis, functions, llm, uploadFile } from "@/api/apiClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, BarChart3, Search, FileSearch } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -21,13 +21,13 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.FilingAnalysis.delete(id),
+    mutationFn: (id) => FilingAnalysis.delete(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] }),
   });
 
   const { data: analyses, isLoading } = useQuery({
     queryKey: ["filingAnalyses"],
-    queryFn: () => base44.entities.FilingAnalysis.list("-created_date", 50),
+    queryFn: () => FilingAnalysis.list("-created_date", 50),
     initialData: [],
   });
 
@@ -49,13 +49,13 @@ export default function Dashboard() {
         file_url = resolvedUrl;
         fileName = resolvedUrl.split("/").pop().split("?")[0] || resolvedUrl;
       } else {
-        const uploaded = await base44.integrations.Core.UploadFile({ file });
+        const uploaded = await uploadFile({ file });
         file_url = uploaded.file_url;
         fileName = file.name;
       }
 
       // Create record immediately so user can see it processing
-      const record = await base44.entities.FilingAnalysis.create({
+      const record = await FilingAnalysis.create({
         file_name: fileName,
         file_url: file_url,
         status: "processing",
@@ -64,34 +64,34 @@ export default function Dashboard() {
       try {
         let extractionResult;
         if (isUrl) {
-          // For SEC URLs: fetch server-side (bypasses CORS/bot blocking), upload, then analyze via file_urls
-          const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
-          if (!fetchRes.data?.file_url) {
+          // For SEC URLs: fetch server-side (bypasses CORS/bot blocking)
+          const fetchRes = await functions.invoke("fetchAndAnalyzeFiling", { url: file_url });
+          if (!fetchRes.data?.content) {
             throw new Error(fetchRes.data?.error || "Failed to fetch filing from URL");
           }
-          extractionResult = await base44.integrations.Core.InvokeLLM({
-            prompt: buildExtractionPrompt(fetchRes.data.file_url, false, null),
+          // Use the fetched content as context for LLM extraction
+          const contentSnippet = fetchRes.data.content.slice(0, 200000);
+          extractionResult = await llm.invoke({
+            prompt: buildExtractionPrompt(file_url, false, null) + `\n\nFILING CONTENT:\n${contentSnippet}`,
             response_json_schema: EXTRACTION_SCHEMA,
-            model: "gemini_3_flash",
-            file_urls: [fetchRes.data.file_url],
+            model: "gemini-2.0-flash",
           });
         } else {
-          // For uploaded files: pass via file_urls (Gemini handles PDF/HTML natively)
-          extractionResult = await base44.integrations.Core.InvokeLLM({
+          // For uploaded files: include the file URL reference
+          extractionResult = await llm.invoke({
             prompt: buildExtractionPrompt(file_url, false, null),
             response_json_schema: EXTRACTION_SCHEMA,
-            model: "gemini_3_flash",
-            file_urls: [file_url],
+            model: "gemini-2.0-flash",
           });
         }
 
-        await base44.entities.FilingAnalysis.update(record.id, {
+        await FilingAnalysis.update(record.id, {
           ...extractionResult,
           status: "completed",
         });
       } catch (err) {
-        // Mark as failed so the user can see it and delete it — don't leave it stuck as "processing"
-        await base44.entities.FilingAnalysis.update(record.id, { status: "failed" });
+        // Mark as failed so the user can see it and delete it
+        await FilingAnalysis.update(record.id, { status: "failed" });
         throw err;
       }
 

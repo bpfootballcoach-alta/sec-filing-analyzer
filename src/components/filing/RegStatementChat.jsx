@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { llm } from "@/api/apiClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Send, Loader2, MessageCircle, Bot, User } from "lucide-react";
@@ -54,8 +54,9 @@ Answer the user's questions about this specific registration statement concisely
       .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
       .join("\n\n");
 
-    const result = await base44.integrations.Core.InvokeLLM({
+    const result = await llm.invoke({
       prompt: `${systemContext}\n\nConversation so far:\n${conversationHistory}\n\nRespond as the assistant:`,
+      model: "gemini-2.0-flash",
     });
 
     setMessages((prev) => [...prev, { role: "assistant", content: result }]);

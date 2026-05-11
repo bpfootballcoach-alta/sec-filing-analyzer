@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { functions } from "@/api/apiClient";
 import { ShieldCheck, ShieldAlert, ShieldX, Info, ExternalLink, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -99,7 +99,7 @@ export default function RegistrationCurrencyCheck({ ticker }) {
     setLoading(true);
     setError(null);
     setResult(null);
-    const res = await base44.functions.invoke("checkRegistrationCurrency", { ticker });
+    const res = await functions.invoke("checkRegistrationCurrency", { ticker });
     setLoading(false);
     if (res.data?.error) {
       setError(res.data.error);

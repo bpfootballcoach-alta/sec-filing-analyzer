@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import RegStatementChat from "./RegStatementChat";
-import { base44 } from "@/api/base44Client";
+import { functions, llm } from "@/api/apiClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -92,7 +92,7 @@ export default function RegStatementChecker() {
     setDetailResult(null);
     setSelectedReg(null);
     try {
-      const res = await base44.functions.invoke("checkRegStatementCurrency", { ticker: t });
+      const res = await functions.invoke("checkRegStatementCurrency", { ticker: t });
       if (res.data?.error) { setError(res.data.error); return; }
       if (res.data?.registrationStatements?.length === 0) {
         setError(`No registration statements found for ${t} on EDGAR.`);
@@ -112,7 +112,7 @@ export default function RegStatementChecker() {
     setError("");
     setDetailResult(null);
     try {
-      const res = await base44.functions.invoke("checkRegStatementCurrency", {
+      const res = await functions.invoke("checkRegStatementCurrency", {
         ticker: regList.ticker,
         accession: reg.accession,
       });

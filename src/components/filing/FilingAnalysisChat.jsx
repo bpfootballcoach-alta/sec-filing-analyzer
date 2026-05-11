@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
+import { llm } from "@/api/apiClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageCircle, Send, Loader2 } from "lucide-react";
@@ -36,9 +36,9 @@ ${analysisJson}`;
     setLoading(true);
 
     try {
-      const response = await base44.integrations.Core.InvokeLLM({
+      const response = await llm.invoke({
         prompt: `${buildSystemPrompt()}\n\nUser Question: ${input}`,
-        model: "gemini_3_flash",
+        model: "gemini-2.0-flash",
       });
 
       const assistantMessage = {

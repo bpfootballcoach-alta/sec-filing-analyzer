@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { FilingAnalysis, functions, llm } from "@/api/apiClient";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -58,7 +58,7 @@ function TickerStep({ onNext }) {
     setLoading(true);
     setError("");
     try {
-      const res = await base44.functions.invoke("fetchAndAnalyzeFiling", { ticker: t });
+      const res = await functions.invoke("fetchAndAnalyzeFiling", { ticker: t });
       if (res.data?.error) {
         setError(res.data.error);
         return;
@@ -233,7 +233,7 @@ export default function SECScanner() {
       setSelectedAccession(filing.accession);
 
       // Create a processing record
-      const record = await base44.entities.FilingAnalysis.create({
+      const record = await FilingAnalysis.create({
         file_name: `${tickerData.ticker} ${filing.form} ${filing.date}`,
         file_url: filing.url,
         ticker: tickerData.ticker,
@@ -246,24 +246,24 @@ export default function SECScanner() {
 
       try {
         // Fetch server-side to bypass CORS; pass cik so XBRL companyfacts API can be used
-        const fetchRes = await base44.functions.invoke("fetchAndAnalyzeFiling", { url: filing.url, cik: tickerData.cik, accession: filing.accession });
-        if (!fetchRes.data?.file_url) {
+        const fetchRes = await functions.invoke("fetchAndAnalyzeFiling", { url: filing.url, cik: tickerData.cik, accession: filing.accession });
+        if (!fetchRes.data?.content) {
           throw new Error(fetchRes.data?.error || "Failed to fetch filing from SEC EDGAR");
         }
 
-        const extractionResult = await base44.integrations.Core.InvokeLLM({
-          prompt: buildExtractionPrompt(fetchRes.data.file_url, false, null),
+        const contentSnippet = fetchRes.data.content.slice(0, 200000);
+        const extractionResult = await llm.invoke({
+          prompt: buildExtractionPrompt(filing.url, false, null) + `\n\nFILING CONTENT:\n${contentSnippet}`,
           response_json_schema: EXTRACTION_SCHEMA,
-          model: "gemini_3_flash",
-          file_urls: [fetchRes.data.file_url],
+          model: "gemini-2.0-flash",
         });
 
-        await base44.entities.FilingAnalysis.update(record.id, {
+        await FilingAnalysis.update(record.id, {
           ...extractionResult,
           status: "completed",
         });
       } catch (err) {
-        await base44.entities.FilingAnalysis.update(record.id, { status: "failed" });
+        await FilingAnalysis.update(record.id, { status: "failed" });
         throw err;
       }
 
