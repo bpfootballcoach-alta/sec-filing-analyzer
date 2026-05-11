@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import RegStatementChat from "./RegStatementChat";
-import { functions, llm } from "@/api/apiClient";
-import { buildRegStatementChecks, generateAISummary, parseRegDocumentDetails } from "@/lib/regStatementChecks";
+import { functions } from "@/api/apiClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -119,55 +118,8 @@ export default function RegStatementChecker() {
       });
       if (res.data?.error) { setError(res.data.error); return; }
 
-      // Build compliance checks from raw SEC data
-      const checkResult = buildRegStatementChecks(res.data);
-
-      // Try to parse IBR and securities from the registration document via LLM
-      const parsedDetails = await parseRegDocumentDetails(res.data);
-
-      // If LLM found an IBR clause, replace the default IBR check
-      if (parsedDetails.ibrResult) {
-        const ibrIdx = checkResult.checks.findIndex(c => c.id === "ibr_status");
-        if (ibrIdx >= 0) {
-          checkResult.checks[ibrIdx] = {
-            ...checkResult.checks[ibrIdx],
-            status: parsedDetails.ibrResult.status,
-            detail: parsedDetails.ibrResult.detail,
-          };
-        }
-        // Recalculate overall status
-        checkResult.overallStatus =
-          checkResult.checks.some(c => c.status === "fail") ? "fail" :
-          checkResult.checks.some(c => c.status === "warn") ? "warn" : "pass";
-      }
-
-      // Try to generate AI summary (requires API key)
-      const aiSummary = await generateAISummary(res.data, checkResult);
-
-      // Determine if this is a transaction registration
-      const isTransactionReg = parsedDetails.isTransactionReg === true || res.data.isSorFFourBase;
-
-      // Build the full detail result expected by the UI
-      const detail = {
-        mode: "detail",
-        ticker: res.data.ticker,
-        cik: res.data.cik,
-        companyName: res.data.companyName,
-        registration: {
-          ...res.data.registration,
-          securitiesRegistered: parsedDetails.securitiesRegistered,
-          isTransactionReg,
-        },
-        filingChain: res.data.filingChain,
-        overallStatus: isTransactionReg ? "transaction" : checkResult.overallStatus,
-        stage: checkResult.stage,
-        applicableRule: checkResult.applicableRule,
-        aiSummary,
-        checks: checkResult.checks,
-        checkedAt: res.data.checkedAt,
-      };
-
-      setDetailResult(detail);
+      // The backend already returns fully-built checks, aiSummary, overallStatus, etc.
+      setDetailResult(res.data);
     } catch (err) {
       setError(err?.message || "Failed to analyze registration statement. Please try again.");
     } finally {
