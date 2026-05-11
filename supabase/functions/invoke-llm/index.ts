@@ -4,6 +4,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -19,11 +21,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Accept API key from request body (client-provided) or from environment (server-configured)
     const apiKey = api_key || Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) {
       return new Response(JSON.stringify({
-        error: "GEMINI_API_KEY not configured. Please add it in your Supabase project edge function secrets, or provide it via the app settings.",
+        error: "GEMINI_API_KEY not configured. Click 'Set API Key' in the app header to add your free key from Google AI Studio (https://aistudio.google.com/apikey).",
         code: "MISSING_API_KEY",
       }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -45,47 +46,79 @@ Deno.serve(async (req: Request) => {
       geminiBody.generationConfig.responseSchema = response_json_schema;
     }
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiBody),
+    // Retry up to 3 times on 429 (rate limit) or 503 (overloaded)
+    let lastError = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        const backoff = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
+        await sleep(backoff);
       }
-    );
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      console.error("Gemini API error:", geminiRes.status, errText);
-      return new Response(JSON.stringify({ error: `Gemini API error: ${geminiRes.status}` }), {
-        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(geminiBody),
+        }
+      );
 
-    const geminiData = await geminiRes.json();
-    const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    if (!textContent) {
-      return new Response(JSON.stringify({ error: "No content in Gemini response" }), {
-        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+        if (!textContent) {
+          const blockReason = geminiData.candidates?.[0]?.finishReason;
+          if (blockReason === "SAFETY") {
+            return new Response(JSON.stringify({ error: "Response blocked by safety filters. Try rephrasing your request." }), {
+              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ error: "No content in Gemini response" }), {
+            status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
 
-    if (response_json_schema) {
-      try {
-        const parsed = JSON.parse(textContent);
-        return new Response(JSON.stringify(parsed), {
+        if (response_json_schema) {
+          try {
+            const parsed = JSON.parse(textContent);
+            return new Response(JSON.stringify(parsed), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          } catch {
+            return new Response(JSON.stringify({ raw: textContent }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+
+        return new Response(JSON.stringify({ result: textContent }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
-      } catch {
-        return new Response(JSON.stringify({ raw: textContent }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
       }
+
+      // Read error body
+      const errBody = await geminiRes.text();
+      lastError = `Gemini API error: ${geminiRes.status}`;
+
+      // Only retry on 429 and 503
+      if (geminiRes.status !== 429 && geminiRes.status !== 503) {
+        console.error("Gemini API error:", geminiRes.status, errBody);
+        // For 400 errors, include more detail
+        if (geminiRes.status === 400) {
+          try {
+            const errJson = JSON.parse(errBody);
+            lastError = `Gemini API error: ${errJson?.error?.message || geminiRes.status}`;
+          } catch (_) {}
+        }
+        break;
+      }
+
+      console.error(`Gemini API ${geminiRes.status}, retry ${attempt + 1}/3`);
     }
 
-    return new Response(JSON.stringify({ result: textContent }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    return new Response(JSON.stringify({ error: lastError + (lastError.includes("429") ? " — rate limit hit. Wait a minute and try again, or use a different API key." : "") }), {
+      status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message || String(err) }), {

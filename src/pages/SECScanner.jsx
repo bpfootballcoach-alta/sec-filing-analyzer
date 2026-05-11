@@ -251,7 +251,8 @@ export default function SECScanner() {
           throw new Error(fetchRes.data?.error || "Failed to fetch filing from SEC EDGAR");
         }
 
-        const contentSnippet = fetchRes.data.content.slice(0, 200000);
+        // Trim content to ~80K chars to stay within Gemini token limits
+        const contentSnippet = fetchRes.data.content.slice(0, 80000);
         const extractionResult = await llm.invoke({
           prompt: buildExtractionPrompt(filing.url, false, null) + `\n\nFILING CONTENT:\n${contentSnippet}`,
           response_json_schema: EXTRACTION_SCHEMA,
@@ -275,7 +276,8 @@ export default function SECScanner() {
     },
     onError: (err) => {
       setSelectedAccession(null);
-      const msg = err?.response?.data?.error || err?.message || "Failed to analyze filing";
+      queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] });
+      const msg = err?.message || "Failed to analyze filing";
       toast.error(msg);
     },
   });

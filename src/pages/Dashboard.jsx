@@ -37,7 +37,7 @@ export default function Dashboard() {
       setIsProcessing(true);
 
       const isUrl = !!url;
-      let file_url, fileName;
+      let file_url, fileName, fileContent;
 
       if (isUrl) {
         // Convert SEC iXBRL viewer URLs (ix?doc=...) to the direct document URL
@@ -50,15 +50,26 @@ export default function Dashboard() {
         file_url = resolvedUrl;
         fileName = resolvedUrl.split("/").pop().split("?")[0] || resolvedUrl;
       } else {
-        const uploaded = await uploadFile({ file });
-        file_url = uploaded.file_url;
+        // Read file content client-side for LLM analysis
         fileName = file.name;
+        try {
+          fileContent = await file.text();
+        } catch (_) {
+          fileContent = null;
+        }
+        // Still upload for storage/reference
+        try {
+          const uploaded = await uploadFile({ file });
+          file_url = uploaded.file_url;
+        } catch (_) {
+          file_url = null;
+        }
       }
 
       // Create record immediately so user can see it processing
       const record = await FilingAnalysis.create({
         file_name: fileName,
-        file_url: file_url,
+        file_url: file_url || "",
         status: "processing",
       });
 
@@ -71,16 +82,21 @@ export default function Dashboard() {
             throw new Error(fetchRes.data?.error || "Failed to fetch filing from URL");
           }
           // Use the fetched content as context for LLM extraction
-          const contentSnippet = fetchRes.data.content.slice(0, 200000);
+          const contentSnippet = fetchRes.data.content.slice(0, 80000);
           extractionResult = await llm.invoke({
             prompt: buildExtractionPrompt(file_url, false, null) + `\n\nFILING CONTENT:\n${contentSnippet}`,
             response_json_schema: EXTRACTION_SCHEMA,
             model: "gemini-2.0-flash",
           });
         } else {
-          // For uploaded files: include the file URL reference
+          // For uploaded files: pass file content to LLM
+          let prompt = buildExtractionPrompt(fileName, false, null);
+          if (fileContent) {
+            const snippet = fileContent.slice(0, 80000);
+            prompt += `\n\nFILING CONTENT:\n${snippet}`;
+          }
           extractionResult = await llm.invoke({
-            prompt: buildExtractionPrompt(file_url, false, null),
+            prompt,
             response_json_schema: EXTRACTION_SCHEMA,
             model: "gemini-2.0-flash",
           });

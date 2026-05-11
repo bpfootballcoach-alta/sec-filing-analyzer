@@ -276,11 +276,133 @@ export function buildRegStatementChecks(data) {
     });
   }
 
+  // CHECK: IBR (Incorporation by Reference) status
+  // Infer from shelf status and available filings — LLM can refine later
+  if (isShelf) {
+    checks.push({
+      id: "ibr_status",
+      label: "Incorporation by Reference (IBR) — Shelf Auto-Refresh",
+      status: latestAnnual ? "pass" : "warn",
+      detail: latestAnnual
+        ? `Shelf registration uses forward IBR under Item 512(a). ${annualFormLabel} (${latestAnnual.date}) auto-incorporates, refreshing the prospectus.`
+        : "Shelf registration uses forward IBR under Item 512(a), but no annual report has been filed to auto-incorporate.",
+      filingDate: latestAnnual?.date || null, filingUrl: latestAnnual?.url || null, filingForm: latestAnnual?.form || null,
+    });
+  } else {
+    // Non-shelf: may or may not have forward IBR clause
+    // Without LLM parsing the document, we note it as uncertain
+    checks.push({
+      id: "ibr_status",
+      label: "Incorporation by Reference (IBR) — Clause Detection",
+      status: "warn",
+      detail: "Non-shelf registration — IBR clause status requires document review. If the registration contains a forward IBR clause, subsequent Exchange Act filings auto-incorporate. If no IBR clause, manual updates (424B or POS AM) are required for each change.",
+      filingDate: null, filingUrl: null, filingForm: null,
+    });
+  }
+
   const overallStatus =
     checks.some(c => c.status === "fail") ? "fail" :
     checks.some(c => c.status === "warn") ? "warn" : "pass";
 
   return { checks, overallStatus, stage: "post_effective", applicableRule: "Section 10(a)(3) / Item 512" };
+}
+
+export async function parseRegDocumentDetails(data) {
+  if (!getGeminiApiKey()) return { ibrResult: null, securitiesRegistered: null, isTransactionReg: null };
+
+  const regDocText = data.regDocText;
+  if (!regDocText || regDocText.length < 200) {
+    return { ibrResult: null, securitiesRegistered: null, isTransactionReg: null };
+  }
+
+  // Strip HTML to reduce token count
+  const stripped = regDocText
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<ix:header[\s\S]*?<\/ix:header>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 60000);
+
+  try {
+    const result = await llm.invoke({
+      prompt: `You are a securities law expert analyzing an SEC registration statement. Extract the following from the document text below:
+
+1. IBR (Incorporation by Reference) clause: Does the registration statement contain a forward incorporation by reference clause under Item 512(a)? What specific documents are incorporated? Is it a "forward" IBR clause (incorporating future filings) or only "specific" IBR (incorporating only already-filed documents)?
+
+2. Securities being registered: What securities are being registered? Include security class, offering type, amount, price per unit, and aggregate offering price if stated.
+
+3. Is this a transaction registration (S-4/F-4 for mergers/acquisitions) or a capital-raising registration?
+
+Registration: ${data.registration?.form} filed ${data.registration?.date}
+Company: ${data.companyName} (${data.ticker})
+
+DOCUMENT TEXT:
+${stripped}`,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          ibr_clause: {
+            type: "object",
+            properties: {
+              has_forward_ibr: { type: "boolean" },
+              has_specific_ibr: { type: "boolean" },
+              no_ibr: { type: "boolean" },
+              incorporated_documents: { type: "string" },
+              summary: { type: "string" },
+            },
+          },
+          securities_registered: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              offering_types: { type: "string" },
+              summary: { type: "string" },
+              total_aggregate_offering_price: { type: "string" },
+              securities: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    security_class: { type: "string" },
+                    offering_type: { type: "string" },
+                    amount_registered: { type: "string" },
+                    price_per_unit: { type: "string" },
+                    aggregate_offering_price: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          is_transaction_registration: { type: "boolean" },
+        },
+      },
+      model: "gemini-2.0-flash",
+    });
+
+    // Map IBR result to a check
+    let ibrResult = null;
+    if (result?.ibr_clause) {
+      const ibr = result.ibr_clause;
+      if (ibr.has_forward_ibr) {
+        ibrResult = { status: "pass", detail: ibr.summary || "Forward IBR clause detected. Subsequent Exchange Act filings auto-incorporate into the prospectus." };
+      } else if (ibr.no_ibr) {
+        ibrResult = { status: "warn", detail: ibr.summary || "No IBR clause found. Manual updates (424B or POS AM) are required for each change." };
+      } else if (ibr.has_specific_ibr) {
+        ibrResult = { status: "info", detail: ibr.summary || "Specific IBR only (no forward clause). Only already-filed documents are incorporated; future filings require manual updates." };
+      }
+    }
+
+    return {
+      ibrResult,
+      securitiesRegistered: result?.securities_registered || null,
+      isTransactionReg: result?.is_transaction_registration || null,
+    };
+  } catch (_) {
+    return { ibrResult: null, securitiesRegistered: null, isTransactionReg: null };
+  }
 }
 
 export async function generateAISummary(data, checkResult) {
