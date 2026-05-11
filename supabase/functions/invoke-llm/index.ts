@@ -11,7 +11,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { prompt, response_json_schema, model } = body;
+    const { prompt, response_json_schema, model, api_key } = body;
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: "prompt is required" }), {
@@ -19,16 +19,19 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
+    // Accept API key from request body (client-provided) or from environment (server-configured)
+    const apiKey = api_key || Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: "GEMINI_API_KEY not configured. Please add it in your Supabase project edge function secrets." }), {
+      return new Response(JSON.stringify({
+        error: "GEMINI_API_KEY not configured. Please add it in your Supabase project edge function secrets, or provide it via the app settings.",
+        code: "MISSING_API_KEY",
+      }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const modelName = model || "gemini-2.0-flash";
 
-    // Build Gemini API request
     const geminiBody: Record<string, any> = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
@@ -68,7 +71,6 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Try to parse as JSON if a schema was requested
     if (response_json_schema) {
       try {
         const parsed = JSON.parse(textContent);
@@ -76,14 +78,12 @@ Deno.serve(async (req: Request) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } catch {
-        // Return raw text if JSON parse fails
         return new Response(JSON.stringify({ raw: textContent }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
     }
 
-    // For non-schema requests, return the text directly
     return new Response(JSON.stringify({ result: textContent }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

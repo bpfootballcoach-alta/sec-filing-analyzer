@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import RegStatementChat from "./RegStatementChat";
 import { functions, llm } from "@/api/apiClient";
+import { buildRegStatementChecks, generateAISummary } from "@/lib/regStatementChecks";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -117,9 +118,35 @@ export default function RegStatementChecker() {
         accession: reg.accession,
       });
       if (res.data?.error) { setError(res.data.error); return; }
-      setDetailResult(res.data);
+
+      // Build compliance checks from raw SEC data
+      const checkResult = buildRegStatementChecks(res.data);
+
+      // Try to generate AI summary (requires API key)
+      const aiSummary = await generateAISummary(res.data, checkResult);
+
+      // Build the full detail result expected by the UI
+      const detail = {
+        mode: "detail",
+        ticker: res.data.ticker,
+        cik: res.data.cik,
+        companyName: res.data.companyName,
+        registration: {
+          ...res.data.registration,
+          securitiesRegistered: null,
+        },
+        filingChain: res.data.filingChain,
+        overallStatus: checkResult.overallStatus,
+        stage: checkResult.stage,
+        applicableRule: checkResult.applicableRule,
+        aiSummary,
+        checks: checkResult.checks,
+        checkedAt: res.data.checkedAt,
+      };
+
+      setDetailResult(detail);
     } catch (err) {
-      setError(err?.response?.data?.error || err?.message || "Failed to analyze registration statement. Please try again.");
+      setError(err?.message || "Failed to analyze registration statement. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -201,7 +228,7 @@ export default function RegStatementChecker() {
                       )}
                     </div>
                     {reg.subject && (
-                      <p className="text-xs text-foreground/80 mt-0.5 font-medium">{reg.subject}</p>
+                      <p className="text-xs text-foreground/80 mt-0.5 font-medium">{reg.subject || reg.description}</p>
                     )}
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {reg.daysOld} days ago{reg.effectDate ? ` · Effective ${reg.effectDate}` : ""}

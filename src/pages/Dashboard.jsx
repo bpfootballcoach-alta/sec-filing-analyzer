@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { FilingAnalysis, functions, llm, uploadFile } from "@/api/apiClient";
+import { FilingAnalysis, functions, llm, uploadFile, getGeminiApiKey, setGeminiApiKey } from "@/api/apiClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileText, BarChart3, Search, FileSearch } from "lucide-react";
+import { FileText, BarChart3, Search, FileSearch, Settings, Key, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import FileUploader from "@/components/filing/FileUploader";
@@ -122,6 +123,17 @@ export default function Dashboard() {
     );
   });
 
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState(getGeminiApiKey());
+
+  const handleSaveApiKey = () => {
+    setGeminiApiKey(apiKeyInput.trim());
+    setShowSettings(false);
+    toast.success(apiKeyInput.trim() ? "API key saved" : "API key removed");
+  };
+
+  const hasApiKey = !!getGeminiApiKey();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -136,13 +148,78 @@ export default function Dashboard() {
               <p className="text-xs text-muted-foreground">AI-powered financial analysis</p>
             </div>
           </div>
-          <Link to="/sec-scanner">
-            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground border border-border hover:border-accent/50 rounded-lg px-3 py-2 transition-all">
-              <FileSearch className="w-4 h-4" /> SEC Scanner
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`flex items-center gap-2 text-sm border rounded-lg px-3 py-2 transition-all ${
+                hasApiKey
+                  ? 'text-muted-foreground hover:text-foreground border-border hover:border-accent/50'
+                  : 'text-amber-600 border-amber-300 bg-amber-50 hover:bg-amber-100'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              {hasApiKey ? 'Settings' : 'Set API Key'}
             </button>
-          </Link>
+            <Link to="/sec-scanner">
+              <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground border border-border hover:border-accent/50 rounded-lg px-3 py-2 transition-all">
+                <FileSearch className="w-4 h-4" /> SEC Scanner
+              </button>
+            </Link>
+          </div>
         </div>
       </header>
+
+      {/* API Key Settings Banner */}
+      {showSettings && (
+        <div className="bg-card border-b border-border">
+          <div className="max-w-6xl mx-auto px-6 py-4">
+            <div className="flex items-start gap-3">
+              <Key className="w-5 h-5 text-muted-foreground mt-0.5" />
+              <div className="flex-1 space-y-2">
+                <h3 className="text-sm font-semibold text-foreground">Gemini API Key</h3>
+                <p className="text-xs text-muted-foreground">
+                  Required for AI analysis features (filing extraction, chat, source lookup). Get a free key from{' '}
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    Google AI Studio
+                  </a>.
+                  The key is stored locally in your browser only.
+                </p>
+                <div className="flex gap-2 max-w-lg">
+                  <Input
+                    type="password"
+                    placeholder="AIza..."
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    className="text-sm"
+                  />
+                  <Button size="sm" onClick={handleSaveApiKey} className="gap-1">
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setShowSettings(false)}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Missing API Key Warning */}
+      {!hasApiKey && (
+        <div className="bg-amber-50 border-b border-amber-200">
+          <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-2">
+            <Key className="w-4 h-4 text-amber-600" />
+            <p className="text-sm text-amber-800">
+              AI features require a Gemini API key.{' '}
+              <button onClick={() => setShowSettings(true)} className="font-semibold underline hover:no-underline">
+                Set your key
+              </button>{' '}
+              to enable filing analysis, chat, and source lookup.
+            </p>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-10">
         {/* Registration Statement Currency Checker */}

@@ -218,6 +218,7 @@ Deno.serve(async (req: Request) => {
             amendmentCount: (f as any)._amendmentCount || 0,
             originalDate: (f as any)._originalDate || f.date,
             description: f.description || null,
+            subject: f.description || null,
           };
         }),
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
