@@ -8,6 +8,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Dashboard from './pages/Dashboard';
 import AnalysisDetail from './pages/AnalysisDetail';
 import SECScanner from './pages/SECScanner';
+import IndustrialValuationPlatform from './pages/IndustrialValuationPlatform';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -34,6 +35,7 @@ const AuthenticatedApp = () => {
       <Route path="/" element={<Dashboard />} />
       <Route path="/analysis/:id" element={<AnalysisDetail />} />
       <Route path="/sec-scanner" element={<SECScanner />} />
+      <Route path="/industrial-valuation" element={<IndustrialValuationPlatform />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
