@@ -1,51 +1,22 @@
 import React, { useState } from "react";
-import { FilingAnalysis, functions, llm } from "@/api/apiClient";
+import { functions } from "@/api/apiClient";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileSearch,
   Search,
-  ArrowRight,
   Loader2,
   ExternalLink,
   FileText,
-  ChevronRight,
   ArrowLeft,
-  Calendar,
   Hash,
-  Zap,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
-import {
-  EXTRACTION_SCHEMA,
-  buildExtractionPrompt,
-} from "@/lib/filingAnalysis";
+import { isRegistrationForm } from "../../supabase/functions/_shared/registrationFilings.ts";
 
 const EXAMPLE_TICKERS = ["ANNA", "AAPL", "NVDA", "TSLA", "GME"];
 
-const FILING_TYPE_COLORS = {
-  "10-K":  "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  "10-Q":  "bg-purple-500/10 text-purple-400 border-purple-500/20",
-  "8-K":   "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-  "S-1":   "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  "S-3":   "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  "DEF14A":"bg-orange-500/10 text-orange-400 border-orange-500/20",
-  "20-F":  "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
-};
-
-function getFilingColor(form) {
-  for (const [key, val] of Object.entries(FILING_TYPE_COLORS)) {
-    if (form?.startsWith(key)) return val;
-  }
-  return "bg-white/10 text-white/50 border-white/10";
-}
-
-// Step 1 — Ticker input
+// Ticker or CIK lookup
 function TickerStep({ onNext }) {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
@@ -79,15 +50,16 @@ function TickerStep({ onNext }) {
       className="mb-6 max-w-md"
     >
       <form onSubmit={handleSubmit}>
-        <label className="block text-xs text-white/40 uppercase tracking-wider mb-2">
-          Step 1 — Enter Ticker
+        <label htmlFor="scanner-company" className="block text-xs text-white/40 uppercase tracking-wider mb-2">
+          Enter ticker or CIK
         </label>
         <div className="flex gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
             <input
+              id="scanner-company"
               type="text"
-              placeholder="e.g. ANNA, AAPL, NVDA"
+              placeholder="e.g. AAPL or 0000320193"
               value={ticker}
               onChange={(e) => {
                 setTicker(e.target.value.toUpperCase().replace(/\s/g, ""));
@@ -102,7 +74,7 @@ function TickerStep({ onNext }) {
             className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 disabled:opacity-40 text-white font-semibold rounded-xl px-5 py-3 transition-all text-sm"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Next →
+            Find filings
           </button>
         </div>
         <div className="flex flex-wrap gap-2 mt-3">
@@ -123,8 +95,8 @@ function TickerStep({ onNext }) {
   );
 }
 
-// Step 2 — Filing selection
-function FilingSelectStep({ ticker, companyName, filings, onBack, onSelect, isAnalyzing, selectedAccession }) {
+// Filing list: native links open EDGAR without invoking application APIs.
+export function FilingSelectStep({ ticker, companyName, cik, filings, onBack }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -141,22 +113,24 @@ function FilingSelectStep({ ticker, companyName, filings, onBack, onSelect, isAn
         </button>
         <div className="h-4 w-px bg-white/10" />
         <div>
-          <span className="text-xs text-white/40 uppercase tracking-wider">Step 2 — Select Filing</span>
+          <span className="text-xs text-white/40 uppercase tracking-wider">Registration statements</span>
           <span className="ml-2 text-sm font-semibold text-white">{companyName}</span>
-          <span className="ml-2 text-xs font-mono text-emerald-400">{ticker}</span>
+          <span className="ml-2 text-xs font-mono text-emerald-400">{ticker || `CIK ${cik}`}</span>
         </div>
       </div>
 
+      {filings.length === 0 && (
+        <p className="text-sm text-white/50">No S/F registration statements found for this company.</p>
+      )}
       <div className="space-y-2">
         {filings.map((filing) => {
-          const isSelected = selectedAccession === filing.accession;
-          const colorClass = getFilingColor(filing.form);
           return (
-            <button
+            <a
               key={filing.accession}
-              onClick={() => onSelect(filing)}
-              disabled={isAnalyzing}
-              className="w-full flex items-center justify-between bg-white/[0.03] border border-white/[0.06] hover:border-emerald-500/30 hover:bg-white/[0.06] rounded-xl px-4 py-3.5 transition-all text-left group disabled:opacity-50"
+              href={filing.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center justify-between bg-white/[0.03] border border-white/[0.06] hover:border-emerald-500/30 hover:bg-white/[0.06] rounded-xl px-4 py-3.5 transition-all text-left group flex-wrap gap-3"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0">
@@ -164,43 +138,28 @@ function FilingSelectStep({ ticker, companyName, filings, onBack, onSelect, isAn
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded border ${colorClass}`}>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
                       {filing.form}
                     </span>
-                    {filing.period && (
-                      <span className="text-xs text-white/30 flex items-center gap-1">
-                        <Calendar className="w-3 h-3" /> {filing.period}
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-white/30 mt-0.5 flex items-center gap-1">
-                    <Hash className="w-3 h-3" /> Filed {filing.date}
+                    Filed {filing.date}
+                  </p>
+                  <p className="text-xs font-mono text-white/40 mt-1 break-all flex items-center gap-1">
+                    <Hash className="w-3 h-3 shrink-0" /> {filing.accession}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <a
-                  href={filing.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-xs text-white/20 hover:text-white/50 transition-colors flex items-center gap-1"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-                {isAnalyzing && isSelected ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-white/20 group-hover:text-emerald-400 transition-colors" />
-                )}
-              </div>
-            </button>
+              <span className="text-xs text-emerald-400 flex items-center gap-1 shrink-0 ml-3">
+                Open on SEC EDGAR <ExternalLink className="w-3 h-3" />
+              </span>
+            </a>
           );
         })}
       </div>
 
       <p className="text-xs text-white/20 pt-2">
-        Showing {filings.length} most recent filings. Click any row to analyze.
+        Showing {filings.length} S/F registration statements. Click a filing to open it on SEC EDGAR.
       </p>
     </motion.div>
   );
@@ -215,8 +174,8 @@ function EmptyState() {
       className="flex flex-col items-center justify-center min-h-[300px] rounded-2xl border border-white/[0.04] bg-white/[0.01] text-center p-10 mt-4"
     >
       <FileSearch className="w-14 h-14 text-white/10 mb-4" />
-      <p className="text-white/30 text-base font-medium">Enter a ticker above to get started</p>
-      <p className="text-white/15 text-sm mt-1">Then paste a document link or auto-fetch the latest filing</p>
+      <p className="text-white/30 text-base font-medium">Enter a ticker or CIK above to get started</p>
+      <p className="text-white/15 text-sm mt-1">Browse S/F registration statements, including S-4, F-4 and amendments</p>
     </motion.div>
   );
 }
@@ -224,73 +183,15 @@ function EmptyState() {
 export default function SECScanner() {
   const [step, setStep] = useState("ticker"); // "ticker" | "select"
   const [tickerData, setTickerData] = useState(null);
-  const [selectedAccession, setSelectedAccession] = useState(null);
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-
-  const analyzeMutation = useMutation({
-    mutationFn: async (filing) => {
-      setSelectedAccession(filing.accession);
-
-      // Create a processing record
-      const record = await FilingAnalysis.create({
-        file_name: `${tickerData.ticker} ${filing.form} ${filing.date}`,
-        file_url: filing.url,
-        ticker: tickerData.ticker,
-        company_name: tickerData.companyName,
-        filing_type: filing.form,
-        filing_date: filing.date,
-        period_covered: filing.period,
-        status: "processing",
-      });
-
-      try {
-        // Fetch server-side to bypass CORS; pass cik so XBRL companyfacts API can be used
-        const fetchRes = await functions.invoke("fetchAndAnalyzeFiling", { url: filing.url, cik: tickerData.cik, accession: filing.accession });
-        if (!fetchRes.data?.content) {
-          throw new Error(fetchRes.data?.error || "Failed to fetch filing from SEC EDGAR");
-        }
-
-        // Trim content to ~80K chars to stay within Gemini token limits
-        const contentSnippet = fetchRes.data.content.slice(0, 80000);
-        const extractionResult = await llm.invoke({
-          prompt: buildExtractionPrompt(filing.url, false, null) + `\n\nFILING CONTENT:\n${contentSnippet}`,
-          response_json_schema: EXTRACTION_SCHEMA,
-          model: "gemini-2.0-flash",
-        });
-
-        await FilingAnalysis.update(record.id, {
-          ...extractionResult,
-          status: "completed",
-        });
-      } catch (err) {
-        await FilingAnalysis.update(record.id, { status: "failed" });
-        throw err;
-      }
-
-      return record.id;
-    },
-    onSuccess: (recordId) => {
-      queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] });
-      navigate(`/analysis/${recordId}`);
-    },
-    onError: (err) => {
-      setSelectedAccession(null);
-      queryClient.invalidateQueries({ queryKey: ["filingAnalyses"] });
-      const msg = err?.message || "Failed to analyze filing";
-      toast.error(msg);
-    },
-  });
-
   const handleTickerNext = (data) => {
-    setTickerData(data);
+    setTickerData({ ...data, filings: (data.filings || []).filter(filing => isRegistrationForm(filing.form)) });
     setStep("select");
   };
 
   const handleBack = () => {
     setStep("ticker");
     setTickerData(null);
-    setSelectedAccession(null);
   };
 
   return (
@@ -328,7 +229,7 @@ export default function SECScanner() {
             <h1 className="text-3xl font-bold text-white">SEC Document Scanner</h1>
           </div>
           <p className="text-white/40 text-sm ml-14">
-            AI-powered analysis of SEC filings — capital structure, financials, deals, warrants, and more.
+            Find S/F registration statements and amendments. Open filings directly on SEC EDGAR.
           </p>
         </motion.div>
 
@@ -342,11 +243,9 @@ export default function SECScanner() {
               key="select"
               ticker={tickerData.ticker}
               companyName={tickerData.companyName}
+              cik={tickerData.cik}
               filings={tickerData.filings}
               onBack={handleBack}
-              onSelect={(filing) => analyzeMutation.mutate(filing)}
-              isAnalyzing={analyzeMutation.isPending}
-              selectedAccession={selectedAccession}
             />
           )}
         </AnimatePresence>
@@ -356,17 +255,6 @@ export default function SECScanner() {
           <EmptyState />
         )}
 
-        {/* Analyzing overlay hint */}
-        {analyzeMutation.isPending && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="mt-6 flex items-center gap-3 text-sm text-emerald-400/70"
-          >
-            <Zap className="w-4 h-4 animate-pulse" />
-            Fetching filing and running AI analysis — this may take 30–60 seconds...
-          </motion.div>
-        )}
       </div>
       </div>
     </div>
