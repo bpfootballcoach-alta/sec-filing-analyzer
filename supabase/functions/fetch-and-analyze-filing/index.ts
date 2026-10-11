@@ -1,3 +1,5 @@
+import { lookupRegistrationFilings } from "../_shared/registrationFilings.ts";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -37,51 +39,6 @@ const secFetch = async (url: string, opts: RequestInit = {}): Promise<Response> 
   return fetch(url, { ...opts, headers: { ...SEC_HEADERS, ...(opts.headers as Record<string, string> || {}) } });
 };
 
-async function lookupTickerFilings(ticker: string) {
-  const tickerMapRes = await secFetch("https://www.sec.gov/files/company_tickers.json");
-  if (!tickerMapRes.ok) throw new Error("Failed to reach SEC EDGAR ticker list");
-  const tickerMap = await tickerMapRes.json();
-
-  let cik: string | null = null;
-  let companyName: string | null = null;
-  for (const entry of Object.values(tickerMap as Record<string, { ticker: string; cik_str: number; title: string }>)) {
-    if (entry.ticker?.toUpperCase() === ticker.toUpperCase()) {
-      cik = String(entry.cik_str).padStart(10, "0");
-      companyName = entry.title;
-      break;
-    }
-  }
-  if (!cik) throw new Error(`Ticker "${ticker}" not found on SEC EDGAR`);
-
-  const filingsRes = await secFetch(`https://data.sec.gov/submissions/CIK${cik}.json`);
-  if (!filingsRes.ok) throw new Error("Failed to fetch filings from EDGAR");
-  const filingsData = await filingsRes.json();
-  const recent = filingsData.filings?.recent;
-  if (!recent?.form?.length) throw new Error(`No recent filings found for ${ticker}`);
-
-  const PRIORITY_FORMS = ["10-K", "10-Q", "8-K", "S-1", "S-3", "20-F", "DEF14A", "S-11", "F-1"];
-  const filings: Array<{ form: string; date: string; period: string; accession: string; primaryDocument: string; url: string }> = [];
-  const cikInt = parseInt(cik, 10);
-  for (let i = 0; i < recent.form.length && filings.length < 20; i++) {
-    const form: string = recent.form[i];
-    if (PRIORITY_FORMS.some(f => form.startsWith(f))) {
-      const accession: string = recent.accessionNumber[i].replace(/-/g, "");
-      const primaryDoc: string = recent.primaryDocument[i];
-      filings.push({
-        form,
-        date: recent.filingDate[i],
-        period: recent.reportDate?.[i] || "",
-        accession,
-        primaryDocument: primaryDoc,
-        url: `https://www.sec.gov/Archives/edgar/data/${cikInt}/${accession}/${primaryDoc}`,
-      });
-    }
-  }
-  if (!filings.length) throw new Error(`No relevant filings found for ${ticker}`);
-
-  return { ticker: ticker.toUpperCase(), companyName: filingsData.name || companyName, cik, filings };
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -91,8 +48,8 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
 
     // Mode: ticker lookup
-    if (body.ticker && !body.url) {
-      const result = await lookupTickerFilings(body.ticker);
+    if ((body.ticker || body.cik) && !body.url) {
+      const result = await lookupRegistrationFilings(body.cik || body.ticker, secFetch);
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -100,7 +57,7 @@ Deno.serve(async (req: Request) => {
 
     const { url, cik: bodyCik, accession } = body;
     if (!url) {
-      return new Response(JSON.stringify({ error: "url or ticker is required" }), {
+      return new Response(JSON.stringify({ error: "url, ticker or CIK is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
